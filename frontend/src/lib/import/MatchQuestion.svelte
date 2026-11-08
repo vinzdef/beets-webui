@@ -214,9 +214,6 @@
 						</dl>
 					{/if}
 					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
-					<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: selected })}>
-						Apply {formatSimilarity(candidate)}% match
-					</button>
 				</div>
 			{/if}
 		</div>
