@@ -30,11 +30,26 @@ Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 docker compose up -d --build     # http://127.0.0.1:8338, restarts automatically
 ```
 
-By default the config, music and import inbox live in `./data/`. Override them with
-`BEETS_CONFIG_DIR`, `MUSIC_DIR` and `INBOX_DIR` (and the port with `WEBUI_PORT`), e.g. in a `.env`
-file next to `compose.yaml`. If `config.yaml` doesn't exist in the config dir, a minimal one is
-created; if you bring your own, make sure `webui` is listed in `plugins` and that `directory` and
-`library` use the container paths (`/music`, `/config/library.db`).
+Out of the box this is a local test environment:
+
+- `config/config.yaml`: beets config with the MusicBrainz autotagger, fetchart and the web UI.
+  The library database and logs are written next to it.
+- `inbox/`: put music to import here.
+- `music/`: the beets library folder. Imports *copy* from the inbox, so you can wipe `music/` and
+  `config/library.db` and import the same files again.
+
+Only the config and empty-folder placeholders are committed; everything else in those folders is
+gitignored. To import from the command line until the UI can do it:
+
+```sh
+docker compose exec beets-webui beet import /inbox      # interactive, matches against MusicBrainz
+```
+
+To use a real library instead, set `BEETS_CONFIG_DIR`, `MUSIC_DIR` and `INBOX_DIR` (and the port
+with `WEBUI_PORT`), e.g. in a `.env` file next to `compose.yaml`. If `config.yaml` doesn't exist
+in the config dir, a minimal one is created. If you bring your own, list `musicbrainz` and `webui`
+in `plugins` (setting `plugins` replaces beets' default of `[musicbrainz]`), and use the container
+paths for `directory` and `library` (`/music`, `/config/library.db`).
 
 The port is published on the host's loopback only, because there's no authentication yet.
 

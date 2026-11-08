@@ -11,5 +11,10 @@ frontend/node_modules/
 frontend/.svelte-kit/
 src/beetsplug/webui/static/
 
-# docker compose default volumes
-data/
+# Local test environment: keep the config and folder placeholders, nothing else
+/config/*
+!/config/config.yaml
+/inbox/*
+!/inbox/.gitkeep
+/music/*
+!/music/.gitkeep

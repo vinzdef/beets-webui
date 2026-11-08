@@ -7,7 +7,7 @@ services:
       # No authentication yet, so only listen on the host's loopback by default.
       - "127.0.0.1:${WEBUI_PORT:-8338}:8338"
     volumes:
-      - ${BEETS_CONFIG_DIR:-./data/config}:/config
-      - ${MUSIC_DIR:-./data/music}:/music
-      # Folder that imports will read new music from
-      - ${INBOX_DIR:-./data/inbox}:/inbox
+      - ${BEETS_CONFIG_DIR:-./config}:/config
+      - ${MUSIC_DIR:-./music}:/music
+      # Folder that imports read new music from
+      - ${INBOX_DIR:-./inbox}:/inbox

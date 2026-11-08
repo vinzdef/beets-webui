@@ -1,4 +1,5 @@
 directory: /music
 library: /config/library.db
 
-plugins: webui
+# Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
+plugins: musicbrainz webui

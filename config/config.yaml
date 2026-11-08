@@ -1,0 +1,15 @@
+# beets config for the local test environment (mounted at /config by compose.yaml).
+directory: /music
+library: /config/library.db
+
+# Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
+plugins: musicbrainz fetchart webui
+
+import:
+  # Copy rather than move, so inbox/ survives for re-imports after wiping music/ and the library.
+  copy: yes
+  write: yes
+  log: /config/import.log
+
+fetchart:
+  auto: yes
