@@ -205,19 +205,19 @@
 				Apply {formatSimilarity(candidate)}% match{pairedByHand ? ', paired by hand' : ''}
 			</button>
 		{/if}
-		{#if unmatchedCount}
-			<label class="keep" title="beets imports only the files that match a track on the release">
-				<input type="checkbox" bind:checked={keepUnmatched} />
-				Keep {unmatchedCount === 1 ? 'the file' : `the ${unmatchedCount} files`} this release doesn't
-				have
-			</label>
-		{/if}
 		{#each actions as choice (choice.short)}
 			<button onclick={() => onanswer({ type: 'choice', short: choice.short })}>
 				{labels[choice.short] ?? choice.long}
 			</button>
 		{/each}
 	</div>
+
+	{#if unmatchedCount}
+		<label class="keep" title="beets imports only the files that match a track on the release">
+			<input type="checkbox" bind:checked={keepUnmatched} />
+			Keep {unmatchedCount === 1 ? 'the file' : `the ${unmatchedCount} files`} this release doesn't have
+		</label>
+	{/if}
 
 	<div class="searches">
 		<form
@@ -536,11 +536,14 @@
 		color: var(--accent);
 		font-size: inherit;
 	}
+	/* Just below the buttons, closer than the question's usual spacing. */
 	.keep {
 		display: inline-flex;
+		align-self: flex-start;
 		align-items: center;
 		gap: 0.35rem;
 		font-size: 0.9em;
+		margin-top: -0.5rem;
 	}
 	.actions,
 	.searches {
