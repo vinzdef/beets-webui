@@ -188,11 +188,6 @@
 								{/each}
 							</tbody>
 						</table>
-						<p class="legend">
-							<span class="warn">Orange</span>: title, track number or length (over 3 s) differs.
-							<span class="bad">Red</span>: missing track, unmatched file, or length off by over 10
-							s.
-						</p>
 					{:else}
 						<dl>
 							<dt>Your file</dt>
@@ -333,11 +328,6 @@
 	tr.missing .bad,
 	tr.unmatched .bad {
 		font-style: italic;
-	}
-	.legend {
-		margin: 0;
-		font-size: 0.85em;
-		opacity: 0.75;
 	}
 	.empty {
 		opacity: 0.8;

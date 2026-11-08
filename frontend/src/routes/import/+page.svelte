@@ -7,6 +7,8 @@
 	let job = $state<ImportJob | null>(null);
 	let inboxes = $state<Inbox[]>([]);
 	let selected = $state<string[]>([]);
+	// The entry last clicked, as the anchor for shift-click range selection.
+	let anchor: string | null = null;
 	const MODE_KEY = 'beets-webui.import.mode';
 	let mode = $state<ImportMode>(loadMode());
 	let singletons = $state(false);
@@ -34,6 +36,32 @@
 			// See above.
 		}
 		return 'manual';
+	}
+
+	const allPaths = $derived(inboxes.flatMap((i) => i.entries.map((e) => e.path)));
+	const allSelected = $derived(allPaths.length > 0 && allPaths.every((p) => selected.includes(p)));
+
+	function toggleAll() {
+		selected = allSelected ? [] : [...allPaths];
+		anchor = null;
+	}
+
+	/** Toggle one entry, or with Shift every entry from the previous click to this one. */
+	function clickEntry(event: MouseEvent, path: string) {
+		const checked = (event.currentTarget as HTMLInputElement).checked;
+		let paths = [path];
+		if (event.shiftKey && anchor && allPaths.includes(anchor)) {
+			const [from, to] = [allPaths.indexOf(anchor), allPaths.indexOf(path)].sort((a, b) => a - b);
+			paths = allPaths.slice(from, to + 1);
+		}
+		const next = new Set(selected);
+		for (const p of paths) {
+			if (checked) next.add(p);
+			else next.delete(p);
+		}
+		// Keep the list's order, which is also the order albums are imported in.
+		selected = allPaths.filter((p) => next.has(p));
+		anchor = path;
 	}
 
 	const active = $derived(job?.status === 'running' || job?.status === 'waiting');
@@ -139,6 +167,16 @@
 				<code>webui: &#123;inboxes: &#123;Downloads: ~/Downloads&#125;&#125;</code>
 			</p>
 		{/if}
+		{#if allPaths.length}
+			<div class="select-bar">
+				<button class="link" onclick={toggleAll}>
+					{allSelected ? 'Clear selection' : 'Select all'}
+				</button>
+				<span class="meta">
+					{selected.length} of {allPaths.length} selected · Shift-click to select a range
+				</span>
+			</div>
+		{/if}
 		{#each inboxes as inbox (inbox.name)}
 			<h2>{inbox.name} <span class="folder">{inbox.path}</span></h2>
 			{#if !inbox.exists}
@@ -150,7 +188,11 @@
 					{#each inbox.entries as entry (entry.path)}
 						<li>
 							<label>
-								<input type="checkbox" value={entry.path} bind:group={selected} />
+								<input
+									type="checkbox"
+									checked={selected.includes(entry.path)}
+									onclick={(e) => clickEntry(e, entry.path)}
+								/>
 								<span>{entry.is_dir ? '📁' : '🎵'} {entry.name}</span>
 							</label>
 						</li>
@@ -291,6 +333,21 @@
 		padding: 0.35rem 0;
 		border-bottom: 1px solid var(--line);
 		cursor: pointer;
+		/* Shift-clicking would otherwise select the text between the clicks. */
+		user-select: none;
+	}
+	.select-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 1rem;
+		margin-top: 0.5rem;
+	}
+	button.link {
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--accent);
 	}
 	fieldset label {
 		display: flex;
