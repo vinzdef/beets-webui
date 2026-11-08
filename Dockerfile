@@ -18,7 +18,7 @@ COPY --from=frontend /app/src/beetsplug/webui/static src/beetsplug/webui/static
 # The plugin plus the extras that the plugins in examples/config.template.yaml need. Releases pass
 # the beets version locked in uv.lock; local builds take the newest one the plugin allows.
 ARG BEETS_VERSION=""
-RUN uv pip install --system --no-cache . "beets[fetchart,embedart,lastgenre]${BEETS_VERSION:+==$BEETS_VERSION}"
+RUN uv pip install --system --no-cache . "beets[fetchart,embedart,lastgenre,discogs]${BEETS_VERSION:+==$BEETS_VERSION}"
 
 COPY docker/ /docker/
 ENV BEETSDIR=/config

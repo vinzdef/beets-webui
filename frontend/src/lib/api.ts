@@ -270,6 +270,8 @@ export interface MatchQuestion {
 	choices: { short: string; long: string }[];
 	/** Whether beets numbers tracks per disc (else across the whole release). */
 	per_disc_numbering: boolean;
+	/** The metadata sources an ID lookup asks, like MusicBrainz or Discogs. */
+	sources: string[];
 }
 
 export interface DuplicateQuestion {

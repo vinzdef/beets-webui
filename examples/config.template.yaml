@@ -1,8 +1,8 @@
 # A fuller beets config to start from: art, genres, tag cleanup and filename rules on top of the
 # web UI. Copy it to your beets config (`beet config -e` opens it) and adjust the paths.
 #
-# fetchart, embedart and lastgenre need extra packages:
-#   pip install "beets[fetchart,embedart,lastgenre]"
+# fetchart, embedart, lastgenre and discogs need extra packages:
+#   pip install "beets[fetchart,embedart,lastgenre,discogs]"
 # (The Docker image already includes them.)
 
 directory: ~/Music/library
@@ -47,6 +47,12 @@ musicbrainz:
     deezer: yes
     beatport: yes
     tidal: yes
+
+# To match against Discogs as well as MusicBrainz, add `discogs` to `plugins` above and paste a
+# token from discogs.com > Settings > Developers. The match screen's ID box then takes Discogs
+# release links too.
+# discogs:
+#   user_token: YOUR_TOKEN
 
 fetchart:
   auto: yes

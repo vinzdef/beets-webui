@@ -137,6 +137,20 @@ def test_refuses_paths_outside_inbox(client, tmp_path):
     assert response.status_code == 400
 
 
+def test_match_question_names_the_metadata_sources(client, album, monkeypatch):
+    class Source:
+        def __init__(self, name):
+            self.data_source = name
+
+    monkeypatch.setattr(
+        "beets.metadata_plugins.find_metadata_source_plugins",
+        lambda: [Source("MusicBrainz"), Source("Discogs")],
+    )
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+
+    assert question(client)["sources"] == ["MusicBrainz", "Discogs"]
+
+
 def test_refuses_cross_origin_requests(client, album):
     response = client.post(
         "/api/imports", json={"paths": [str(album)]}, headers={"Origin": "https://evil.example"}

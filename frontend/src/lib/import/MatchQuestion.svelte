@@ -312,7 +312,10 @@
 				onanswer({ type: 'id', ids: searchIds });
 			}}
 		>
-			<input bind:value={searchIds} placeholder="MusicBrainz ID or URL" />
+			<input
+				bind:value={searchIds}
+				placeholder="{question.sources.join(' or ') || 'Release'} ID or URL"
+			/>
 			<button>Look up</button>
 		</form>
 	</div>

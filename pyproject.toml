@@ -13,7 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     # Extras for the plugins in examples/config.template.yaml
-    "beets[embedart,fetchart,lastgenre]",
+    "beets[discogs,embedart,fetchart,lastgenre]",
     "httpx2>=2.14.0",
     "pytest>=8",
     "ruff>=0.8",

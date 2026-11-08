@@ -18,7 +18,7 @@ from array import array
 from collections.abc import Callable
 from typing import Any
 
-from beets import config, plugins
+from beets import config, metadata_plugins, plugins
 from beets.autotag import AlbumMatch, Proposal, Recommendation, TrackMatch, tag_album, tag_item
 from beets.importer import (
     Action,
@@ -420,6 +420,10 @@ class WebImportSession(ImportSession):
                     "choices": [{"short": c.short, "long": c.long} for c in choices],
                     # Whether track numbers restart on each disc, or count across the release.
                     "per_disc_numbering": config["per_disc_numbering"].get(bool),
+                    # The sources an ID lookup asks, like MusicBrainz or Discogs.
+                    "sources": [
+                        p.data_source for p in metadata_plugins.find_metadata_source_plugins()
+                    ],
                 },
             )
 
