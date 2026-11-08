@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from beets.autotag import AlbumInfo, TrackInfo
-from beets.library import Library
+from beets.library import Item, Library
 from beets.test.helper import AutotagStub, ConfigMixin
 from fastapi.testclient import TestClient
 from mediafile import MediaFile
@@ -528,17 +528,42 @@ def test_refresh_only_with_mbsync(client, lib, album, monkeypatch):
     assert client.post(f"/api/items/{item.id}/refresh").status_code == 400  # on an album
 
 
-def test_save_folder_image_keeps_it_in_place(client, lib, album):
+def test_save_folder_image_copies_it_to_cover(client, lib, album):
     imported = imported_album(client, lib, album)
     folder = os.path.dirname(imported.items().get().path)
-    image = os.path.join(folder, b"folder.png")
-    with open(image, "wb") as f:
+    with open(os.path.join(folder, b"folder.png"), "wb") as f:
         f.write(PNG)
     assert client.get(f"/api/albums/{imported.id}").json()["art_source"] == "folder"
     assert client.post(f"/api/albums/{imported.id}/art/save").status_code == 200
     imported.load()
-    assert imported.artpath == image
-    assert not [f for f in os.listdir(folder) if f.startswith(b"cover")]
+    assert imported.artpath == os.path.join(folder, b"cover.png")
+    assert os.path.exists(os.path.join(folder, b"folder.png"))
+
+
+def test_fill_missing_covers(client, lib, tmp_path):
+    albums = {}
+    for name in ("Folder", "Embedded", "Bare"):
+        path = make_album(tmp_path / "library" / name)
+        albums[name] = lib.add_album([Item.from_path(str(p)) for p in sorted(path.iterdir())])
+    folder = lambda a: os.path.dirname(a.items().get().path)  # noqa: E731
+    with open(os.path.join(folder(albums["Folder"]), b"folder.png"), "wb") as f:
+        f.write(PNG)
+    for item in albums["Embedded"].items():
+        tags = MediaFile(item.path)
+        tags.art = PNG
+        tags.save()
+
+    res = client.post("/api/library/covers", json={"fetch": False})
+    assert res.status_code == 200, res.json()
+    deadline = time.monotonic() + 10
+    while (state := client.get("/api/library/covers").json())["running"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+
+    assert (state["total"], state["done"], state["folder"], state["embedded"]) == (3, 3, 1, 1)
+    assert [a["id"] for a in state["not_found"]] == [albums["Bare"].id]
+    for name in ("Folder", "Embedded"):
+        assert os.path.exists(os.path.join(folder(albums[name]), b"cover.png"))
 
 
 def test_log_keeps_every_import(client, lib, album, tmp_path):

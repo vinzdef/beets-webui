@@ -11,6 +11,7 @@
 		type Page
 	} from '$lib/api';
 	import BulkEditDialog from '$lib/library/BulkEditDialog.svelte';
+	import CoverFillDialog from '$lib/library/CoverFillDialog.svelte';
 	import HealthGauge from '$lib/library/HealthGauge.svelte';
 
 	// 'song' lists tracks instead of albums.
@@ -38,6 +39,9 @@
 	let selecting = $state(false);
 	let selected = $state<number[]>([]);
 	let bulkEditing = $state(false);
+	let fillingCovers = $state(false);
+	// Bumped when covers were added, so the grid doesn't show the browser's cached "no cover".
+	let artVersion = $state(0);
 	// Bumped after changes, so the health gauge checks again.
 	let healthVersion = $state(0);
 
@@ -196,6 +200,7 @@
 	<input bind:value={query} placeholder="beets query, e.g. artist:radiohead year:1990..1999" />
 	<button>Search</button>
 	<button type="button" onclick={openUpdate}>Update library…</button>
+	<button type="button" onclick={() => (fillingCovers = true)}>Fill missing covers…</button>
 </form>
 
 <div class="toolbar">
@@ -229,10 +234,22 @@
 			<button type="button" onclick={() => (selecting = true)}>Select</button>
 		{/if}
 		{#key healthVersion}
-			<HealthGauge onupdate={openUpdate} />
+			<HealthGauge onupdate={openUpdate} onfillcovers={() => (fillingCovers = true)} />
 		{/key}
 	</div>
 </div>
+
+{#if fillingCovers}
+	<CoverFillDialog
+		onclose={(filled) => {
+			fillingCovers = false;
+			if (filled) {
+				artVersion = Date.now();
+				healthVersion++;
+			}
+		}}
+	/>
+{/if}
 
 {#if bulkEditing}
 	<BulkEditDialog
@@ -314,7 +331,7 @@
 									/>
 								{/if}
 								<img
-									src={api.artUrl(album.id)}
+									src={api.artUrl(album.id, artVersion)}
 									alt=""
 									loading="lazy"
 									onerror={(e) => e.currentTarget.remove()}

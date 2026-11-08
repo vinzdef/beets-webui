@@ -7,6 +7,7 @@ question on the job and blocks until the browser answers it. See docs/interactiv
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -107,7 +108,12 @@ class ImportJob:
         self._next_question = 1
         self._aborted = False
         self._lib = lib
-        self._thread = threading.Thread(target=self._run, name="webui-import", daemon=True)
+        # Run in a copy of the starting request's context: beets keeps the library folder, which
+        # its relative item paths resolve against, in a context variable.
+        ctx = contextvars.copy_context()
+        self._thread = threading.Thread(
+            target=ctx.run, args=(self._run,), name="webui-import", daemon=True
+        )
 
     @property
     def active(self) -> bool:

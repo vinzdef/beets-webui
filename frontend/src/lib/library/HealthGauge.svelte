@@ -3,9 +3,14 @@
 	import { api, type LibraryHealth } from '$lib/api';
 
 	let {
-		onupdate
-	}: { /** Opens the Update library dialog, which fixes missing files. */ onupdate: () => void } =
-		$props();
+		onupdate,
+		onfillcovers
+	}: {
+		/** Opens the Update library dialog, which fixes missing files. */
+		onupdate: () => void;
+		/** Opens the Fill missing covers dialog. */
+		onfillcovers: () => void;
+	} = $props();
 
 	let health = $state<LibraryHealth | null>(null);
 	let error = $state<string | null>(null);
@@ -75,6 +80,15 @@
 							dialog?.close();
 							onupdate();
 						}}>Update library…</button
+					>
+				{/if}
+				{#if check.id === 'no_art' && check.albums.length}
+					<button
+						type="button"
+						onclick={() => {
+							dialog?.close();
+							onfillcovers();
+						}}>Fill missing covers…</button
 					>
 				{/if}
 				<ul>

@@ -1,20 +1,23 @@
 """Album art: serving it from wherever music players would find it, and fetching, uploading,
 embedding or saving it as a file."""
 
+import contextvars
 import os
 import tempfile
+import threading
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import mediafile
 from beets import logging, util
-from beets.library import Album, Item
+from beets.library import Album, Item, Library
 
 # Private to beets' bundled plugins, but what `beet embedart` and `beet extractart` run; beets is
 # pinned to one minor version, so it doesn't move under us.
 from beetsplug._utils.art import embed_album, extract_first
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
 from .common import find_plugin, get_lib
 from .imports import require_same_origin
@@ -135,26 +138,32 @@ async def upload_album_art(request: Request, album_id: int):
     return {"art_source": "file"}
 
 
-@router.post("/albums/{album_id}/art/save", dependencies=[Depends(require_same_origin)])
-def save_album_art(request: Request, album_id: int):
-    """Make art beets doesn't track yet its art file: a folder image as it is, embedded art
-    extracted to a new file named by `art_filename` (cover.jpg by default)."""
-    album = get_album_or_404(request, album_id)
+def save_local_art(album: Album) -> ArtSource | None:
+    """Give an album without an art file one from art it already has: an image in its folder,
+    else art embedded in its tracks. The file is named by `art_filename` (cover.jpg by default),
+    so a folder.jpg is copied to cover.jpg. Returns where the art came from."""
     found = find_art(album)
-    if found is None:
-        raise HTTPException(404, "This album has no art to save.")
+    if found is None or found[0] == "file":
+        return None
     source, art = found
     if source == "folder":
-        # Already in the album's folder: point beets at it rather than copying it to cover.jpg.
-        album.artpath = os.fsencode(art)
-        album.store()
-    elif source == "embedded":
+        album.set_art(os.fsencode(art), copy=True)
+    else:
         with tempfile.TemporaryDirectory() as tmp:
             out = extract_first(log, os.fsencode(os.path.join(tmp, "cover")), album.items())
             if out is None:
-                raise HTTPException(500, "Couldn't extract the embedded art.")
+                return None
             album.set_art(out, copy=True)
-            album.store()
+    album.store()
+    return source
+
+
+@router.post("/albums/{album_id}/art/save", dependencies=[Depends(require_same_origin)])
+def save_album_art(request: Request, album_id: int):
+    """Turn a folder image or embedded art into the album's art file."""
+    album = get_album_or_404(request, album_id)
+    if not stored_art(album) and save_local_art(album) is None:
+        raise HTTPException(404, "This album has no art to save.")
     return {"art_source": "file"}
 
 
@@ -174,3 +183,84 @@ def set_art_from_bytes(album: Album, data: bytes, ext: str) -> None:
         Path(path).write_bytes(data)
         album.set_art(os.fsencode(path), copy=True)
         album.store()
+
+
+class CoverFill:
+    """Gives every album without an art file one, in the background: from its folder or tags
+    first, then from fetchart's sources. One run at a time; the state is polled."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.state: dict[str, Any] = {"running": False}
+
+    def start(self, lib: Library, fetch: bool) -> bool:
+        with self._lock:
+            if self.state["running"]:
+                return False
+            albums = [a for a in lib.albums() if not stored_art(a)]
+            self.state = {
+                "running": True,
+                "total": len(albums),
+                "done": 0,
+                "folder": 0,
+                "embedded": 0,
+                "fetched": 0,
+                "not_found": [],
+            }
+        # beets resolves the library's relative paths through a context variable, which a new
+        # thread doesn't inherit; run in a copy of this request's context.
+        ctx = contextvars.copy_context()
+        threading.Thread(
+            target=ctx.run, args=(self._run, lib, albums, fetch), name="webui-covers", daemon=True
+        ).start()
+        return True
+
+    def _run(self, lib: Library, albums: list[Album], fetch: bool) -> None:
+        fetchart = find_plugin("fetchart") if fetch else None
+        try:
+            for album in albums:
+                try:
+                    source = save_local_art(album)
+                    if source is None and fetchart is not None:
+                        fetchart.batch_fetch_art(lib, [album], force=False, quiet=True)
+                        album.load()
+                        source = "fetched" if stored_art(album) else None
+                except Exception:
+                    log.exception("couldn't get art for {}", album)
+                    source = None
+                with self._lock:
+                    self.state["done"] += 1
+                    if source:
+                        self.state[source] += 1
+                    else:
+                        self.state["not_found"].append(
+                            {"id": album.id, "album": album.album, "albumartist": album.albumartist}
+                        )
+        finally:
+            with self._lock:
+                self.state["running"] = False
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {**self.state, "not_found": list(self.state.get("not_found", []))}
+
+
+covers = CoverFill()
+
+
+@router.get("/library/covers")
+def cover_fill_status():
+    """How the current (or last) run of filling missing covers is going."""
+    return {**covers.snapshot(), "can_fetch": find_plugin("fetchart") is not None}
+
+
+class FillCovers(BaseModel):
+    # Also look online with fetchart's sources, when the plugin is on.
+    fetch: bool = True
+
+
+@router.post("/library/covers", dependencies=[Depends(require_same_origin)])
+def fill_missing_covers(request: Request, body: FillCovers):
+    if not covers.start(get_lib(request), body.fetch):
+        raise HTTPException(409, "Missing covers are already being filled.")
+    return cover_fill_status()

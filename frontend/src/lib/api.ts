@@ -78,6 +78,9 @@ export const api = {
 	embedArt: (id: number) => post(`/albums/${id}/art/embed`),
 	uploadArt: (id: number, image: Blob) => send(`/albums/${id}/art`, 'PUT', image),
 	health: () => get<LibraryHealth>('/library/health'),
+	coverFill: () => get<CoverFill>('/library/covers'),
+	/** Give every album without an art file one: from its folder or tags, then fetchart. */
+	fillCovers: (fetch: boolean) => post<CoverFill>('/library/covers', { fetch }),
 	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
 	previewUpdate: () => get<LibraryUpdatePreview>('/library/update'),
 	updateLibrary: () => post<LibraryUpdate>('/library/update')
@@ -87,6 +90,19 @@ export interface LibraryUpdatePreview {
 	missing: Pick<Item, 'id' | 'artist' | 'album' | 'title' | 'path'>[];
 	/** Whether files whose tags changed get moved to match the path format. */
 	moves_files: boolean;
+}
+
+export interface CoverFill {
+	/** Whether the fetchart plugin is on, to look online. */
+	can_fetch: boolean;
+	running: boolean;
+	// Absent before the first run.
+	total?: number;
+	done?: number;
+	folder?: number;
+	embedded?: number;
+	fetched?: number;
+	not_found?: Pick<Album, 'id' | 'album' | 'albumartist'>[];
 }
 
 export interface LibraryHealth {

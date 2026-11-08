@@ -221,7 +221,7 @@
 				{#if album.art_source === 'folder' || album.art_source === 'embedded'}
 					<button
 						disabled={busy}
-						title="Make it beets' art file for this album, so beets and other players use it"
+						title="Save it as the album's cover file (cover.jpg by default), so beets and other players use it"
 						onclick={() =>
 							artAction(() => api.saveArt(album!.id), 'Saved the cover as an art file.')}
 						>Save as art file</button
