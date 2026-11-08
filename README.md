@@ -27,12 +27,16 @@ Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 ### Docker
 
 ```sh
-docker build -t beets-webui .
-docker run -p 8338:8338 -v ~/.config/beets:/config -v ~/Music:/music beets-webui
+docker compose up -d --build     # http://127.0.0.1:8338, restarts automatically
 ```
 
-If `/config/config.yaml` doesn't exist, a minimal one is created. Make sure `webui` is listed in
-`plugins`.
+By default the config, music and import inbox live in `./data/`. Override them with
+`BEETS_CONFIG_DIR`, `MUSIC_DIR` and `INBOX_DIR` (and the port with `WEBUI_PORT`), e.g. in a `.env`
+file next to `compose.yaml`. If `config.yaml` doesn't exist in the config dir, a minimal one is
+created; if you bring your own, make sure `webui` is listed in `plugins` and that `directory` and
+`library` use the container paths (`/music`, `/config/library.db`).
+
+The port is published on the host's loopback only, because there's no authentication yet.
 
 ## Development
 

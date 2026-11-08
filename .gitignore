@@ -10,3 +10,6 @@ dist/
 frontend/node_modules/
 frontend/.svelte-kit/
 src/beetsplug/webui/static/
+
+# docker compose default volumes
+data/
