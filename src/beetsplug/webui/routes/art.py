@@ -293,14 +293,25 @@ shrinking = BackgroundJob("webui-shrink-art")
 
 
 # Narrower than this, a cover isn't made smaller to meet the size limit.
-MIN_WIDTH = 200
+MIN_WIDTH = 100
+
+
+def image_fits(data: bytes, max_width: int, max_bytes: int) -> bool:
+    """Whether an image is already within both limits. One the resizer can't read counts as
+    fitting, so it's left be."""
+    if len(data) > max_bytes:
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.fsencode(os.path.join(tmp, f"in.{mediafile.image_extension(data) or 'jpg'}"))
+        Path(os.fsdecode(path)).write_bytes(data)
+        size = ArtResizer.shared.get_size(path)
+    return size is None or size[0] <= max_width
 
 
 def shrink_image(data: bytes, max_width: int, quality: int, max_bytes: int) -> bytes | None:
-    """The image as a JPEG at most `max_width` wide and `max_bytes` big, or None when it's
-    already within both. Every track carries its own copy of the cover, so this is paid once
-    per track. To meet the size, the quality is lowered first, then the image made narrower
-    (down to MIN_WIDTH); if even that's too big, the smallest try is used."""
+    """The image as a JPEG at most `max_width` wide and, if it can be, `max_bytes` big: the
+    quality is lowered first, then the image made narrower (down to MIN_WIDTH). If even that's
+    too big, the smallest try is returned. None when the resizer can't read or write it."""
     resizer = ArtResizer.shared
     with tempfile.TemporaryDirectory() as tmp:
         ext = mediafile.image_extension(data) or "jpg"
@@ -308,8 +319,6 @@ def shrink_image(data: bytes, max_width: int, quality: int, max_bytes: int) -> b
         Path(os.fsdecode(path)).write_bytes(data)
         size = resizer.get_size(path)
         if size is None:
-            return None  # not an image the resizer can read; leave it be
-        if size[0] <= max_width and len(data) <= max_bytes:
             return None
         # Writing a .jpg converts as it resizes: PNGs and the like get much smaller as JPEGs. If
         # that fails (Pillow can't save transparency as JPEG), keep the format. On failure the
@@ -331,36 +340,65 @@ def shrink_image(data: bytes, max_width: int, quality: int, max_bytes: int) -> b
         return None
 
 
+def is_cover(images: list, index: int) -> bool:
+    """Whether an embedded image is the track's cover: its front cover, else its first image."""
+    fronts = [i for i, image in enumerate(images) if image.type == mediafile.ImageType.front]
+    return index == (fronts[0] if fronts else 0)
+
+
 def shrink_embedded_art(items: list[Item], max_width: int, quality: int, max_bytes: int) -> None:
-    """Rewrite each track's embedded covers smaller, keeping its other images and those that
-    wouldn't get smaller. Tracks of an album usually share a cover, so each is shrunk once per
-    album; only the current album's are kept, so memory doesn't grow with the library."""
+    """Rewrite each track's embedded images that are over the limits smaller, keeping the rest.
+
+    A cover is made from the album's cover file (cover.jpg) when it has one: the original rather
+    than a copy already compressed into the tags, and the same picture as the folder's. Other
+    images, and tracks without a cover file, are shrunk from themselves. A track is rewritten
+    only when its images get smaller. Results are reused across an album's tracks; only the
+    current album's are kept, so memory doesn't grow with the library."""
     shrunk: dict[str, bytes | None] = {}
     album_id: object = object()
+    cover_file: bytes | None = None
     for item in sorted(items, key=lambda i: (i.album_id is None, i.album_id or 0, i.id)):
         if item.album_id is None or item.album_id != album_id:
             shrunk.clear()
             album_id = item.album_id
+            album = item.get_album()
+            art = stored_art(album) if album else None
+            cover_file = Path(art).read_bytes() if art else None
         try:
             tags = mediafile.MediaFile(util.syspath(item.path))
             images = tags.images or []
-            changed, saved = False, 0
+            changed, saved, over, from_file = False, 0, False, False
             for i, image in enumerate(images):
-                key = hashlib.sha1(image.data).hexdigest()
+                if image_fits(image.data, max_width, max_bytes):
+                    continue
+                source = cover_file if cover_file and is_cover(images, i) else image.data
+                key = hashlib.sha1(source).hexdigest()
                 if key not in shrunk:
-                    shrunk[key] = shrink_image(image.data, max_width, quality, max_bytes)
+                    fits = source is cover_file and image_fits(source, max_width, max_bytes)
+                    shrunk[key] = (
+                        source if fits else shrink_image(source, max_width, quality, max_bytes)
+                    )
                 smaller = shrunk[key]
                 if smaller is not None and len(smaller) < len(image.data):
                     saved += len(image.data) - len(smaller)
                     images[i] = mediafile.Image(smaller, desc=image.desc, type=image.type)
                     changed = True
+                    over |= len(smaller) > max_bytes
+                    from_file |= source is cover_file
             if changed:
                 tags.images = images
                 tags.save()
                 # beets would otherwise think the file changed outside it on the next update.
                 item.mtime = item.current_mtime()
                 item.store()
-                shrinking.update({"rewritten": 1, "saved_bytes": saved})
+                shrinking.update(
+                    {
+                        "rewritten": 1,
+                        "saved_bytes": saved,
+                        "over_size": int(over),
+                        "from_cover_file": int(from_file),
+                    }
+                )
             else:
                 shrinking.update({"unchanged" if images else "no_art": 1})
         except Exception:
@@ -387,7 +425,7 @@ def shrink_embedded_covers(request: Request, body: ShrinkArt):
         raise HTTPException(400, "Shrinking images needs ImageMagick or Pillow on the server.")
     items = list(get_lib(request).items())
     state = {"total": len(items), "rewritten": 0, "unchanged": 0, "no_art": 0, "failed": 0}
-    state["saved_bytes"] = 0
+    state |= {"saved_bytes": 0, "over_size": 0, "from_cover_file": 0}
     if not shrinking.start(
         state, lambda: shrink_embedded_art(items, body.max_width, body.quality, body.max_kb * 1024)
     ):

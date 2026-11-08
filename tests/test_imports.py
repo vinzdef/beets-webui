@@ -892,3 +892,53 @@ def test_shrink_narrow_but_heavy_covers(client, lib, tmp_path, monkeypatch):
     state = wait_for_job(client, "/api/library/embedded-art")
     assert state["rewritten"] == 1
     assert len(MediaFile(item.path).art) <= 40 * 1024 < len(cover)
+
+
+def small_jpeg(size=300, color=(200, 30, 30)):
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (size, size), color).save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
+def test_shrink_takes_covers_from_the_cover_file(client, lib, tmp_path, monkeypatch):
+    from beets.util.artresizer import ArtResizer, PILBackend
+
+    monkeypatch.setattr(ArtResizer.shared, "local_method", PILBackend())
+    path = make_album(tmp_path / "library" / "WithFile", tracks=2)
+    album = lib.add_album([Item.from_path(str(p)) for p in sorted(path.iterdir())])
+    cover = small_jpeg()
+    (path / "cover.jpg").write_bytes(cover)
+    album.artpath = str(path / "cover.jpg").encode()
+    album.store()
+    for item in album.items():
+        tags = MediaFile(item.path)
+        tags.art = big_png(size=600)  # a heavy, re-compressed copy in the tags
+        tags.save()
+
+    client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 85, "max_kb": 100})
+    state = wait_for_job(client, "/api/library/embedded-art")
+    assert (state["rewritten"], state["from_cover_file"], state["over_size"]) == (2, 2, 0)
+    # The cover file already fits, so it's embedded as it is.
+    assert all(MediaFile(i.path).art == cover for i in album.items())
+
+
+def test_shrink_reports_covers_still_over_the_size(client, lib, tmp_path, monkeypatch):
+    from beets.util.artresizer import ArtResizer, PILBackend
+
+    monkeypatch.setattr(ArtResizer.shared, "local_method", PILBackend())
+    path = make_album(tmp_path / "library" / "Noisy", tracks=1)
+    album = lib.add_album([Item.from_path(str(p)) for p in sorted(path.iterdir())])
+    (item,) = album.items()
+    tags = MediaFile(item.path)
+    tags.art = big_png(size=1000)  # noise barely compresses
+    tags.save()
+    # Not narrower than 800 px, where noise can't get to 10 KB.
+    monkeypatch.setattr("beetsplug.webui.routes.art.MIN_WIDTH", 800)
+
+    client.post("/api/library/embedded-art", json={"max_width": 1000, "quality": 85, "max_kb": 10})
+    state = wait_for_job(client, "/api/library/embedded-art")
+    assert (state["rewritten"], state["over_size"]) == (1, 1)

@@ -147,6 +147,10 @@ export interface ShrinkArt {
 	no_art?: number;
 	failed?: number;
 	saved_bytes?: number;
+	/** Rewritten tracks whose cover came from the album's cover file, not their own tags. */
+	from_cover_file?: number;
+	/** Rewritten tracks still over the size: even the narrowest try didn't fit. */
+	over_size?: number;
 }
 
 export interface FeatPreview {

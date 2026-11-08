@@ -4,9 +4,12 @@
 
 	let { onclose }: { onclose: () => void } = $props();
 
+	// The narrowest the server makes a cover to meet the size (MIN_WIDTH in routes/art.py).
+	const MIN_WIDTH = 100;
+
 	const WIDTHS = [500, 600, 800, 1000, 1200, 1500];
 	const QUALITIES = [70, 80, 85, 90, 95];
-	const SIZES = [50, 75, 100, 150, 200];
+	const SIZES = [10, 25, 50, 75, 100, 150, 200];
 
 	let dialog = $state<HTMLDialogElement>();
 	let job = $state<ShrinkArt | null>(null);
@@ -51,10 +54,11 @@
 	<h2>Shrink embedded covers</h2>
 	<p>
 		Re-encodes the cover art inside every track as a JPEG within the width and size below. Every
-		track carries its own copy, so a 12-track album pays the size 12 times. Covers over the size get
-		a lower quality, and if that's not enough, are made narrower. Covers already within both are
-		left alone, and a track is only rewritten when it gets smaller. The cover files in album folders
-		aren't touched.
+		track carries its own copy, so a 12-track album pays the size 12 times. The source is the
+		album's cover file (cover.jpg) when it has one, else the image already in the tags. Covers over
+		the size get a lower quality, and if that's not enough, are made narrower. Covers already within
+		both are left alone, a track is only rewritten when it gets smaller, and the cover files
+		themselves aren't touched.
 	</p>
 
 	{#if job && !job.can_resize}
@@ -69,7 +73,16 @@
 			Rewrote <strong>{job.rewritten}</strong> of {job.total} tracks, saving
 			<strong>{megabytes(job.saved_bytes)}</strong>. {job.unchanged} were already small enough,
 			{job.no_art} have no embedded cover{job.failed ? `, ${job.failed} failed (see the log)` : ''}.
+			{#if job.from_cover_file}
+				{job.from_cover_file} took their cover from the album's cover file.
+			{/if}
 		</p>
+		{#if job.over_size}
+			<p class="warn">
+				{job.over_size} track{job.over_size === 1 ? '' : 's'} still have a cover over the size: even at
+				{MIN_WIDTH} px it didn't fit, so the smallest version was used. A larger size keeps them sharper.
+			</p>
+		{/if}
 	{/if}
 
 	{#if error}<p class="error">{error}</p>{/if}
@@ -131,6 +144,9 @@
 	}
 	.error {
 		color: crimson;
+	}
+	.warn {
+		color: var(--warn);
 	}
 	.buttons {
 		display: flex;
