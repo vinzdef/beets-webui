@@ -492,3 +492,50 @@ def test_art_rejects_non_images_and_needs_fetchart(client, lib, album):
     assert client.put(f"/api/albums/{imported.id}/art", content=b"not an image").status_code == 400
     assert client.post(f"/api/albums/{imported.id}/art/embed").status_code == 400
     assert client.post(f"/api/albums/{imported.id}/art/fetch").status_code == 400
+
+
+class FakeMBSync:
+    name = "mbsync"
+
+    def __init__(self):
+        self.calls = []
+
+    def albums(self, lib, query, move, pretend, write):
+        self.calls.append(("albums", query, pretend))
+
+    def singletons(self, lib, query, move, pretend, write):
+        self.calls.append(("singletons", query, pretend))
+
+
+def test_refresh_only_with_mbsync(client, lib, album, monkeypatch):
+    imported = imported_album(client, lib, album)
+    imported.mb_albumid = "some-release"
+    imported.store()
+    assert client.get(f"/api/albums/{imported.id}").json()["can_refresh"] is False
+    assert client.post(f"/api/albums/{imported.id}/refresh").status_code == 400
+
+    fake = FakeMBSync()
+    monkeypatch.setattr(
+        "beetsplug.webui.routes.library.find_plugin",
+        lambda name: fake if name == "mbsync" else None,
+    )
+    assert client.get(f"/api/albums/{imported.id}").json()["can_refresh"] is True
+    assert client.post(f"/api/albums/{imported.id}/refresh").status_code == 200
+    # Only albums(): an album id means another track to singletons().
+    assert fake.calls == [("albums", [f"id:{imported.id}"], False)]
+
+    item = imported.items().get()
+    assert client.post(f"/api/items/{item.id}/refresh").status_code == 400  # on an album
+
+
+def test_save_folder_image_keeps_it_in_place(client, lib, album):
+    imported = imported_album(client, lib, album)
+    folder = os.path.dirname(imported.items().get().path)
+    image = os.path.join(folder, b"folder.png")
+    with open(image, "wb") as f:
+        f.write(PNG)
+    assert client.get(f"/api/albums/{imported.id}").json()["art_source"] == "folder"
+    assert client.post(f"/api/albums/{imported.id}/art/save").status_code == 200
+    imported.load()
+    assert imported.artpath == image
+    assert not [f for f in os.listdir(folder) if f.startswith(b"cover")]

@@ -3,7 +3,7 @@ directory: /music
 library: /config/library.db
 
 # Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
-plugins: musicbrainz fetchart webui
+plugins: musicbrainz fetchart mbsync webui
 
 import:
   # Copy rather than move, so inbox/ survives for re-imports after wiping music/ and the library.

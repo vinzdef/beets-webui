@@ -18,7 +18,8 @@
 		{ key: 'genres', label: 'Genres', hint: 'Separate with ;' }
 	];
 
-	let item = $state<Item | null>(null);
+	let item = $state<(Item & { can_refresh?: boolean }) | null>(null);
+	let notice = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let editing = $state(false);
 	let busy = $state(false);
@@ -57,6 +58,24 @@
 		try {
 			item = await api.editItem(item!.id, changed);
 			editing = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function refresh() {
+		const ok = confirm(
+			"Fetch this recording from MusicBrainz again and apply its current data? Tags MusicBrainz provides replace yours, including edits you've made to them."
+		);
+		if (!ok) return;
+		busy = true;
+		error = null;
+		notice = null;
+		try {
+			item = await api.refreshItem(item!.id);
+			notice = 'Refreshed from MusicBrainz.';
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -120,12 +139,21 @@
 							>Re-import…</button
 						>
 					{/if}
+					{#if item.can_refresh}
+						<button
+							disabled={busy}
+							onclick={refresh}
+							title="Fetch the recording this track is matched to again, for corrections made on MusicBrainz since you imported it"
+							>Refresh from MusicBrainz</button
+						>
+					{/if}
 				</div>
 			{/if}
 		</div>
 	</header>
 
 	{#if error}<p class="error">{error}</p>{/if}
+	{#if notice}<p class="notice">{notice}</p>{/if}
 
 	{#if editing}
 		<form
@@ -253,5 +281,8 @@
 	}
 	.error {
 		color: crimson;
+	}
+	.notice {
+		color: var(--ok);
 	}
 </style>

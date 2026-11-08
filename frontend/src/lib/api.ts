@@ -21,7 +21,12 @@ export interface Album {
 /** Where an album's art comes from: beets' art file, an image in its folder, or a track's tags. */
 export type ArtSource = 'file' | 'folder' | 'embedded';
 
-export type AlbumDetail = Album & { items: Item[]; art_source: ArtSource | null };
+export type AlbumDetail = Album & {
+	items: Item[];
+	art_source: ArtSource | null;
+	/** Whether the mbsync plugin is on and the album is matched to a release. */
+	can_refresh: boolean;
+};
 
 export interface AlbumEdit {
 	album?: Record<string, string>;
@@ -54,7 +59,10 @@ export const api = {
 	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
 	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
-	item: (id: number) => get<Item>(`/items/${id}`),
+	item: (id: number) => get<Item & { can_refresh: boolean }>(`/items/${id}`),
+	/** Like `beet mbsync`: fetch the matched release (or recording) again and apply it. */
+	refreshAlbum: (id: number) => post<AlbumDetail>(`/albums/${id}/refresh`),
+	refreshItem: (id: number) => post<Item & { can_refresh: boolean }>(`/items/${id}/refresh`),
 	editItem: (id: number, fields: Record<string, string>) =>
 		post<Item>(`/items/${id}`, fields, 'PATCH'),
 	/** Set the same fields on several albums or tracks. */

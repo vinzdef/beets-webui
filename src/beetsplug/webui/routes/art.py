@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import mediafile
-from beets import logging, plugins, util
+from beets import logging, util
 from beets.library import Album, Item
 
 # Private to beets' bundled plugins, but what `beet embedart` and `beet extractart` run; beets is
@@ -16,7 +16,7 @@ from beetsplug._utils.art import embed_album, extract_first
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from .common import get_lib
+from .common import find_plugin, get_lib
 from .imports import require_same_origin
 
 router = APIRouter()
@@ -111,7 +111,7 @@ def get_item_art(request: Request, item_id: int):
 def fetch_album_art(request: Request, album_id: int):
     """Like `beet fetchart -f` for one album, using the sources configured for fetchart."""
     album = get_album_or_404(request, album_id)
-    fetchart = next((p for p in plugins.find_plugins() if p.name == "fetchart"), None)
+    fetchart = find_plugin("fetchart")
     if fetchart is None:
         raise HTTPException(400, "Add fetchart to the plugins in your beets config to fetch art.")
     fetchart.batch_fetch_art(get_lib(request), [album], force=True, quiet=True)
@@ -137,14 +137,16 @@ async def upload_album_art(request: Request, album_id: int):
 
 @router.post("/albums/{album_id}/art/save", dependencies=[Depends(require_same_origin)])
 def save_album_art(request: Request, album_id: int):
-    """Turn art beets doesn't track yet (a folder image or embedded art) into its art file."""
+    """Make art beets doesn't track yet its art file: a folder image as it is, embedded art
+    extracted to a new file named by `art_filename` (cover.jpg by default)."""
     album = get_album_or_404(request, album_id)
     found = find_art(album)
     if found is None:
         raise HTTPException(404, "This album has no art to save.")
     source, art = found
     if source == "folder":
-        album.set_art(os.fsencode(art), copy=True)
+        # Already in the album's folder: point beets at it rather than copying it to cover.jpg.
+        album.artpath = os.fsencode(art)
         album.store()
     elif source == "embedded":
         with tempfile.TemporaryDirectory() as tmp:

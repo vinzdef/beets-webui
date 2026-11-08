@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .art import find_art
-from .common import get_lib, paginate, serialize
+from .common import find_plugin, get_lib, paginate, serialize
 from .imports import require_same_origin
 
 router = APIRouter()
@@ -47,6 +47,7 @@ def get_album(request: Request, album_id: int):
     data["items"] = [serialize(i) for i in album.items()]
     found = find_art(album)
     data["art_source"] = found[0] if found else None
+    data["can_refresh"] = bool(album.mb_albumid) and find_plugin("mbsync") is not None
     return data
 
 
@@ -65,7 +66,52 @@ def get_item(request: Request, item_id: int):
     item = get_lib(request).get_item(item_id)
     if item is None:
         raise HTTPException(404, "item not found")
-    return serialize(item)
+    data = serialize(item)
+    # Album tracks are refreshed with their album.
+    data["can_refresh"] = (
+        item.album_id is None and bool(item.mb_trackid) and find_plugin("mbsync") is not None
+    )
+    return data
+
+
+def refresh(request: Request, kind: Literal["albums", "singletons"], obj_id: int) -> None:
+    """Like `beet mbsync`: fetch the matched release or recording again and apply it.
+
+    Only the one method: album and item ids overlap, so `id:5` means a different thing to each.
+    """
+    mbsync = find_plugin("mbsync")
+    if mbsync is None:
+        raise HTTPException(400, "Add mbsync to the plugins in your beets config to refresh.")
+    sync = mbsync.albums if kind == "albums" else mbsync.singletons
+    sync(get_lib(request), [f"id:{obj_id}"], ui.should_move(), False, ui.should_write())
+
+
+@router.post("/albums/{album_id}/refresh", dependencies=[Depends(require_same_origin)])
+def refresh_album(request: Request, album_id: int):
+    album = get_lib(request).get_album(album_id)
+    if album is None:
+        raise HTTPException(404, "album not found")
+    if not album.mb_albumid:
+        raise HTTPException(
+            400, "This album isn't matched to a release, so there's nothing to refresh."
+        )
+    refresh(request, "albums", album_id)
+    return get_album(request, album_id)
+
+
+@router.post("/items/{item_id}/refresh", dependencies=[Depends(require_same_origin)])
+def refresh_item(request: Request, item_id: int):
+    item = get_lib(request).get_item(item_id)
+    if item is None:
+        raise HTTPException(404, "item not found")
+    if item.album_id is not None:
+        raise HTTPException(400, "This track is on an album: refresh the album instead.")
+    if not item.mb_trackid:
+        raise HTTPException(
+            400, "This track isn't matched to a recording, so there's nothing to refresh."
+        )
+    refresh(request, "singletons", item_id)
+    return get_item(request, item_id)
 
 
 def check_fields(fields: dict[str, str], allowed: set[str], what: str) -> None:

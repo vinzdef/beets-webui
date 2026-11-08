@@ -99,6 +99,24 @@
 		}
 	}
 
+	async function refresh() {
+		const ok = confirm(
+			"Fetch this release from MusicBrainz again and apply its current data? Tags MusicBrainz provides replace yours, including edits you've made to them."
+		);
+		if (!ok) return;
+		busy = true;
+		error = null;
+		notice = null;
+		try {
+			album = await api.refreshAlbum(album!.id);
+			notice = 'Refreshed from MusicBrainz.';
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function reimport() {
 		busy = true;
 		error = null;
@@ -174,6 +192,14 @@
 						title="Look up matches for this album again and choose one. Nothing is copied; files are renamed only if the new tags change their path"
 						>Re-import…</button
 					>
+					{#if album.can_refresh}
+						<button
+							disabled={busy}
+							onclick={refresh}
+							title="Fetch the release this album is matched to again, for corrections made on MusicBrainz since you imported it"
+							>Refresh from MusicBrainz</button
+						>
+					{/if}
 				</div>
 			{/if}
 			<!-- Cover changes save straight away, so they work while editing the fields too. -->

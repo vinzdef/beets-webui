@@ -3,9 +3,10 @@
 from itertools import islice
 from typing import Any
 
-from beets import util
+from beets import plugins, util
 from beets.dbcore import Model
 from beets.library import Library
+from beets.plugins import BeetsPlugin
 from fastapi import Request
 
 PATH_FIELDS = {"path", "artpath"}
@@ -13,6 +14,11 @@ PATH_FIELDS = {"path", "artpath"}
 
 def get_lib(request: Request) -> Library:
     return request.app.state.lib
+
+
+def find_plugin(name: str) -> BeetsPlugin | None:
+    """A plugin the beets config loads, by its name in `plugins`."""
+    return next((p for p in plugins.find_plugins() if p.name == name), None)
 
 
 def serialize(obj: Model) -> dict[str, Any]:
