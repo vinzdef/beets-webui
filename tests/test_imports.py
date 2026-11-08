@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 import pytest
+from beets.autotag import AlbumInfo, TrackInfo
 from beets.library import Library
 from beets.test.helper import AutotagStub, ConfigMixin
 from fastapi.testclient import TestClient
@@ -213,3 +214,60 @@ def test_unset_options_keep_config_values(client, album):
     client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
     assert client.get("/api/imports/current").json()["options"] == {}
     answer(client, question(client), type="choice", short="b")
+
+
+def stub_candidate(matcher, monkeypatch, album_name):
+    """Make the stub return one candidate matching the fixture files except for its album name."""
+
+    def candidates(items, artist, album, va_likely):
+        tracks = [
+            TrackInfo(
+                title=f"Tag Track {n}",
+                track_id=f"t{n}",
+                artist="Tag Artist",
+                length=1.0425,
+                index=n,
+                medium=1,
+                medium_index=n,
+                medium_total=len(items),
+            )
+            for n in range(1, len(items) + 1)
+        ]
+        yield AlbumInfo(
+            tracks=tracks,
+            artist="Tag Artist",
+            album=album_name,
+            album_id="x",
+            artist_id="a",
+            va=False,
+            mediums=1,
+        )
+
+    monkeypatch.setattr("beets.metadata_plugins.candidates", candidates)
+
+
+@pytest.mark.parametrize(
+    ("album_name", "exact_only", "asked"),
+    [
+        ("Tag Album", False, False),  # perfect match: applied unasked
+        ("Tag Album", True, False),  # ...in either mode
+        ("Tag Albun", False, False),  # strong but imperfect: beets applies it unasked
+        ("Tag Albun", True, True),  # ...but exact-only mode asks
+    ],
+)
+def test_exact_only(
+    client, lib, album, matcher, monkeypatch, config, album_name, exact_only, asked
+):
+    stub_candidate(matcher, monkeypatch, album_name)
+    body = {"paths": [str(album)], "timid": False, "exact_only": exact_only}
+    client.post("/api/imports", json=body).raise_for_status()
+    state = wait_for(client, lambda s: s["question"] or s["status"] == "done")
+
+    assert bool(state["question"]) == asked, state
+    if asked:
+        assert 0 < state["question"]["candidates"][0]["distance"] < 0.04
+        client.post("/api/imports/current/abort").raise_for_status()
+    else:
+        assert [a.album for a in lib.albums()] == [album_name]
+    finished(client)
+    assert config["match"]["strong_rec_thresh"].as_number() == 0.04  # restored after the import

@@ -7,11 +7,31 @@
 	let job = $state<ImportJob | null>(null);
 	let roots = $state<InboxRoot[]>([]);
 	let selected = $state<string[]>([]);
-	let timid = $state(false);
+	type AskMode = 'exact' | 'config' | 'always';
+	const ASK_MODE_KEY = 'beets-webui.import.ask';
+	let askMode = $state<AskMode>(loadAskMode());
 	let singletons = $state(false);
 	let groupAlbums = $state(false);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
+
+	$effect(() => {
+		try {
+			localStorage.setItem(ASK_MODE_KEY, askMode);
+		} catch {
+			// Storage can be unavailable (private windows); the default is fine then.
+		}
+	});
+
+	function loadAskMode(): AskMode {
+		try {
+			const saved = localStorage.getItem(ASK_MODE_KEY);
+			if (saved === 'exact' || saved === 'config' || saved === 'always') return saved;
+		} catch {
+			// See above.
+		}
+		return 'exact';
+	}
 
 	const active = $derived(job?.status === 'running' || job?.status === 'waiting');
 
@@ -53,7 +73,8 @@
 	function start() {
 		// Unchecked options are left out so the beets config decides.
 		const options = {
-			...(timid && { timid: true }),
+			...(askMode === 'exact' && { timid: false, exact_only: true }),
+			...(askMode === 'always' && { timid: true }),
 			...(singletons && { singletons: true }),
 			...(groupAlbums && { group_albums: true })
 		};
@@ -138,7 +159,21 @@
 
 		{#if roots.length}
 			<fieldset>
-				<label><input type="checkbox" bind:checked={timid} /> Confirm every match (timid)</label>
+				<legend>Ask me about a match</legend>
+				<label>
+					<input type="radio" value="exact" bind:group={askMode} />
+					Unless it's an exact (100%) match
+				</label>
+				<label>
+					<input type="radio" value="config" bind:group={askMode} />
+					As my beets config says (strong matches, about 96% and up, are applied)
+				</label>
+				<label>
+					<input type="radio" value="always" bind:group={askMode} />
+					Always (timid)
+				</label>
+			</fieldset>
+			<fieldset>
 				<label
 					><input type="checkbox" bind:checked={singletons} /> Import as individual tracks</label
 				>
@@ -229,6 +264,11 @@
 		padding: 0.35rem 0;
 		border-bottom: 1px solid var(--line);
 		cursor: pointer;
+	}
+	legend {
+		padding: 0;
+		margin-bottom: 0.35rem;
+		font-weight: 500;
 	}
 	fieldset {
 		border: none;

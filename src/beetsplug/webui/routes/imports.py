@@ -72,6 +72,8 @@ class StartImport(BaseModel):
     timid: bool | None = None
     singletons: bool | None = None
     group_albums: bool | None = None
+    # Apply matches unasked only when they're perfect (100%); ask about everything else.
+    exact_only: bool | None = None
 
 
 @router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)

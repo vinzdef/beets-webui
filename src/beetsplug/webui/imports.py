@@ -145,7 +145,7 @@ class ImportJob:
         saved_sources = list(config.sources)
         _running_job = self
         try:
-            config["import"].set(self.options)
+            config.set(config_overrides(self.options))
             session = WebImportSession(
                 self, self._lib, _import_loghandler(), [p.encode() for p in self.paths]
             )
@@ -176,6 +176,22 @@ class ImportJob:
                 status, f"Import failed: {self.error}"
             ),
         )
+
+
+IMPORT_OPTIONS = {"timid", "singletons", "group_albums"}
+# beets treats a match as strong (and applies it unasked) when its distance is *below* this
+# threshold, so anything above zero admits only a perfect match.
+EXACT_MATCH_THRESHOLD = 1e-9
+
+
+def config_overrides(options: dict[str, Any]) -> dict[str, Any]:
+    """Turn per-import options from the UI into beets config for the session."""
+    overrides: dict[str, Any] = {
+        "import": {k: v for k, v in options.items() if k in IMPORT_OPTIONS}
+    }
+    if options.get("exact_only"):
+        overrides["match"] = {"strong_rec_thresh": EXACT_MATCH_THRESHOLD}
+    return overrides
 
 
 class ImportManager:

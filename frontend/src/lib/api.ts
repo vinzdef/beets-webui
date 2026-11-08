@@ -157,6 +157,8 @@ export interface StartOptions {
 	timid?: boolean;
 	singletons?: boolean;
 	group_albums?: boolean;
+	/** Only apply perfect (100%) matches without asking. */
+	exact_only?: boolean;
 }
 
 export type AnswerBody =
