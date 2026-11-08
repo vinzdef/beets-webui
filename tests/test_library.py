@@ -32,6 +32,13 @@ def test_missing_album(client):
     assert client.get("/api/albums/999/art").status_code == 404
 
 
+def test_update_preview_lists_missing_files(client, lib, tmp_path):
+    lib.directory = str(tmp_path).encode()
+    missing = client.get("/api/library/update").json()["missing"]
+    assert sorted(m["title"] for m in missing) == ["Loose Track", "Track 1", "Track 2", "Track 3"]
+    assert client.get("/api/items").json()["total"] == 4
+
+
 def test_update_removes_missing_files(client, lib, tmp_path):
     lib.directory = str(tmp_path).encode()
     # None of the fixture's files exist on disk.
@@ -44,3 +51,22 @@ def test_update_refuses_without_library_folder(client, lib, tmp_path):
     lib.directory = str(tmp_path / "unmounted").encode()
     assert client.post("/api/library/update").status_code == 409
     assert client.get("/api/items").json()["total"] == 4
+
+
+def test_albums_carry_their_folder(client, lib):
+    lib.directory = b"/music"
+    body = client.get("/api/albums", params={"order": "path"}).json()
+    assert body["results"][0]["folder"] == "ok-computer"
+
+
+def test_album_art_falls_back_to_folder_image(client, lib, tmp_path):
+    album = lib.albums().get()
+    folder = tmp_path / "ok-computer"
+    folder.mkdir()
+    (folder / "Cover.JPG").write_bytes(b"\xff\xd8\xff fake jpeg")
+    for item in album.items():
+        item.path = str(folder / f"{item.track:02d}.flac").encode()
+        item.store()
+    res = client.get(f"/api/albums/{album.id}/art")
+    assert res.status_code == 200
+    assert res.content == b"\xff\xd8\xff fake jpeg"
