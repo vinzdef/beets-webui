@@ -65,6 +65,15 @@
 	</button>
 {:else if error}
 	<span class="meta" title={error}>Health unavailable</span>
+{:else}
+	<!-- Shown straight away: the check reads every file, which can take a while. -->
+	<button type="button" class="gauge loading" disabled aria-busy="true">
+		<svg viewBox="0 0 36 36" aria-hidden="true">
+			<circle class="track" cx="18" cy="18" r="15.9155" />
+			<circle class="value" cx="18" cy="18" r="15.9155" stroke-dasharray="25 75" />
+		</svg>
+		<span>Checking health…</span>
+	</button>
 {/if}
 
 <dialog bind:this={dialog}>
@@ -158,6 +167,24 @@
 	.gauge.bad svg,
 	.bad {
 		color: var(--bad);
+	}
+	.gauge.loading:disabled {
+		opacity: 0.75;
+		cursor: progress;
+	}
+	.gauge.loading svg {
+		color: var(--accent);
+		animation: spin 1s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.gauge.loading svg {
+			animation: none;
+		}
 	}
 	.gauge span {
 		font-variant-numeric: tabular-nums;
