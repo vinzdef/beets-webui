@@ -179,10 +179,26 @@
 				</label>
 			</fieldset>
 			<fieldset>
-				<label
-					><input type="checkbox" bind:checked={singletons} /> Import as individual tracks</label
-				>
-				<label><input type="checkbox" bind:checked={groupAlbums} /> Group albums by tags</label>
+				<label>
+					<input type="checkbox" bind:checked={singletons} />
+					<span>
+						<strong>Import as individual tracks</strong>
+						<small>
+							Match each file on its own against single recordings instead of treating each folder
+							as an album. For loose songs that don't belong to an album.
+						</small>
+					</span>
+				</label>
+				<label>
+					<input type="checkbox" bind:checked={groupAlbums} />
+					<span>
+						<strong>Split folders into albums by tags</strong>
+						<small>
+							Normally one folder is one album. This splits a folder that mixes several albums into
+							one album per artist and album tag before matching.
+						</small>
+					</span>
+				</label>
 			</fieldset>
 			<div class="row">
 				<button class="primary" disabled={busy || selected.length === 0} onclick={start}>
@@ -275,6 +291,15 @@
 		padding: 0.35rem 0;
 		border-bottom: 1px solid var(--line);
 		cursor: pointer;
+	}
+	fieldset label {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	fieldset small {
+		display: block;
+		opacity: 0.65;
 	}
 	legend {
 		padding: 0;
