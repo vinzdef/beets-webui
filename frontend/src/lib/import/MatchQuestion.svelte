@@ -4,22 +4,22 @@
 	let { question, onanswer }: { question: MatchQuestion; onanswer: (body: AnswerBody) => void } =
 		$props();
 
-	let open = $state<boolean[]>([]);
+	let selected = $state(0);
 	let searchArtist = $state('');
 	let searchName = $state('');
 	let searchIds = $state('');
 
-	// A new question (e.g. after a search) starts with only its best candidate expanded.
+	// A new question (e.g. after a search) starts from its best candidate again.
 	$effect(() => {
-		open = question.candidates.map((_, i) => i === 0);
+		question.id;
+		selected = 0;
 	});
 
 	const task = $derived(question.task);
-	const best = $derived<Candidate | undefined>(question.candidates[0]);
+	const candidate = $derived<Candidate | undefined>(question.candidates[selected]);
 	const isAlbum = $derived(task.kind === 'album');
+	// Abort lives in the page's status bar, so it isn't repeated here.
 	const actions = $derived(question.choices.filter((c) => c.short !== 'b'));
-	const canAbort = $derived(question.choices.some((c) => c.short === 'b'));
-	const allOpen = $derived(open.length > 0 && open.every(Boolean));
 
 	const labels: Record<string, string> = {
 		s: 'Skip',
@@ -30,17 +30,13 @@
 	};
 
 	function meta(c: Candidate): string {
-		return [c.year, c.label, c.country, c.media, c.albumtype, c.data_source, !isAlbum && c.album]
+		return [c.year, c.label, c.country, c.media, c.albumtype, c.data_source]
 			.filter((v) => v)
 			.join(' · ');
 	}
 
 	function changed(a: string | null | undefined, b: string | null | undefined) {
 		return (a ?? '').trim().toLowerCase() !== (b ?? '').trim().toLowerCase();
-	}
-
-	function apply(index: number) {
-		onanswer({ type: 'apply', candidate: index });
 	}
 </script>
 
@@ -53,10 +49,10 @@
 		<p class="path">{task.paths.join(', ')}</p>
 	</header>
 
-	<div class="toolbar">
-		{#if best}
-			<button class="primary" onclick={() => apply(0)}>
-				Apply {best.similarity.toFixed(0)}% match
+	<div class="actions">
+		{#if question.candidates[0]}
+			<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: 0 })}>
+				Apply {question.candidates[0].similarity.toFixed(0)}% match
 			</button>
 		{/if}
 		{#each actions as choice (choice.short)}
@@ -64,26 +60,17 @@
 				{labels[choice.short] ?? choice.long}
 			</button>
 		{/each}
-		{#if canAbort}
-			<button class="danger" onclick={() => onanswer({ type: 'choice', short: 'b' })}>
-				Abort import
-			</button>
-		{/if}
 	</div>
 
-	<div class="lookup">
+	<div class="searches">
 		<form
 			onsubmit={(e) => {
 				e.preventDefault();
 				onanswer({ type: 'search', artist: searchArtist, name: searchName });
 			}}
 		>
-			<input bind:value={searchArtist} placeholder="Artist" aria-label="Artist" />
-			<input
-				bind:value={searchName}
-				placeholder={isAlbum ? 'Album' : 'Title'}
-				aria-label={isAlbum ? 'Album' : 'Title'}
-			/>
+			<input bind:value={searchArtist} placeholder="Artist" />
+			<input bind:value={searchName} placeholder={isAlbum ? 'Album' : 'Title'} />
 			<button>Search</button>
 		</form>
 		<form
@@ -92,7 +79,7 @@
 				onanswer({ type: 'id', ids: searchIds });
 			}}
 		>
-			<input bind:value={searchIds} placeholder="MusicBrainz ID or URL" aria-label="ID" />
+			<input bind:value={searchIds} placeholder="MusicBrainz ID or URL" />
 			<button>Look up</button>
 		</form>
 	</div>
@@ -100,79 +87,67 @@
 	{#if question.candidates.length === 0}
 		<p class="empty">No matches found. Search by name or ID above, or choose what to do.</p>
 	{:else}
-		<div class="list-header">
-			<span
-				>{question.candidates.length} candidate{question.candidates.length === 1 ? '' : 's'}</span
-			>
-			<button class="link" onclick={() => (open = open.map(() => !allOpen))}>
-				{allOpen ? 'Collapse all' : 'Expand all'}
-			</button>
-		</div>
-
-		<ol class="candidates">
-			{#each question.candidates as c, i (c.index)}
-				<li class:open={open[i]}>
-					<div class="entry-head">
-						<button
-							class="toggle"
-							aria-expanded={open[i]}
-							aria-controls="candidate-{question.id}-{i}"
-							onclick={() => (open[i] = !open[i])}
-						>
-							<span class="chevron" aria-hidden="true">▸</span>
+		<div class="layout">
+			<ol class="candidates">
+				{#each question.candidates as c (c.index)}
+					<li>
+						<button class:selected={c.index === selected} onclick={() => (selected = c.index)}>
 							<span class="score {c.strength}">{c.similarity.toFixed(1)}%</span>
 							<span class="title">{c.artist} – {c.name}</span>
 							{#if meta(c)}<span class="meta">{meta(c)}</span>{/if}
+							{#if !isAlbum && c.album}<span class="meta">{c.album}</span>{/if}
 							{#if c.penalties.length}
 								<span class="penalties">≠ {c.penalties.join(', ')}</span>
 							{/if}
 						</button>
-						<button class:primary={i === 0} onclick={() => apply(i)}>Apply</button>
-					</div>
+					</li>
+				{/each}
+			</ol>
 
-					{#if open[i]}
-						<div class="entry-body" id="candidate-{question.id}-{i}">
-							{#if isAlbum && c.tracks}
-								<table>
-									<thead>
-										<tr><th>#</th><th>Your file</th><th></th><th>Match</th><th>Length</th></tr>
-									</thead>
-									<tbody>
-										{#each c.tracks as { item, track }}
-											<tr>
-												<td class="num">{track.medium_index ?? track.index}</td>
-												<td>{item.title || item.path.split('/').pop()}</td>
-												<td class="arrow">→</td>
-												<td class:changed={changed(item.title, track.title)}>{track.title}</td>
-												<td class="num">{formatLength(track.length)}</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-								{#if c.extra_tracks?.length}
-									<p class="warn">
-										Missing tracks: {c.extra_tracks.map((t) => t.title).join(', ')}
-									</p>
-								{/if}
-								{#if c.extra_items?.length}
-									<p class="warn">
-										Unmatched files: {c.extra_items.map((it) => it.title || it.path).join(', ')}
-									</p>
-								{/if}
-							{:else}
-								<dl>
-									<dt>Your file</dt>
-									<dd>{task.items[0]?.title} ({formatLength(task.items[0]?.length)})</dd>
-									<dt>Match</dt>
-									<dd>{c.name} ({formatLength(c.length)})</dd>
-								</dl>
-							{/if}
-							{#if c.disambig}<p class="meta">{c.disambig}</p>{/if}
-						</div>
+			{#if candidate}
+				<div class="detail">
+					{#if isAlbum && candidate.tracks}
+						<table>
+							<thead>
+								<tr><th>#</th><th>Your file</th><th></th><th>Match</th><th>Length</th></tr>
+							</thead>
+							<tbody>
+								{#each candidate.tracks as { item, track }}
+									<tr>
+										<td class="num">{track.medium_index ?? track.index}</td>
+										<td>{item.title || item.path.split('/').pop()}</td>
+										<td class="arrow">→</td>
+										<td class:changed={changed(item.title, track.title)}>{track.title}</td>
+										<td class="num">{formatLength(track.length)}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+						{#if candidate.extra_tracks?.length}
+							<p class="warn">
+								Missing tracks: {candidate.extra_tracks.map((t) => t.title).join(', ')}
+							</p>
+						{/if}
+						{#if candidate.extra_items?.length}
+							<p class="warn">
+								Unmatched files: {candidate.extra_items.map((i) => i.title || i.path).join(', ')}
+							</p>
+						{/if}
+					{:else}
+						<dl>
+							<dt>Your file</dt>
+							<dd>{task.items[0]?.title} ({formatLength(task.items[0]?.length)})</dd>
+							<dt>Match</dt>
+							<dd>{candidate.name} ({formatLength(candidate.length)})</dd>
+						</dl>
 					{/if}
-				</li>
-			{/each}
-		</ol>
+					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
+					<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: selected })}>
+						Apply {candidate.similarity.toFixed(0)}% match
+					</button>
+				</div>
+			{/if}
+		</div>
 	{/if}
 </section>
 
@@ -181,7 +156,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		min-width: 0;
 	}
 	h2 {
 		margin: 0;
@@ -196,42 +170,15 @@
 	.path {
 		word-break: break-all;
 	}
-	/* One line of actions; scrolls sideways on narrow screens rather than wrapping. */
-	.toolbar {
-		display: flex;
-		gap: 0.5rem;
-		overflow-x: auto;
-		padding-bottom: 2px;
-	}
-	.toolbar button {
-		flex-shrink: 0;
-		white-space: nowrap;
-	}
-	.toolbar .danger {
-		margin-left: auto;
-	}
-	.lookup {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem 1.5rem;
-	}
-	.lookup form {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-	.list-header {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
+	.layout {
+		display: grid;
+		grid-template-columns: minmax(240px, 1fr) 2fr;
 		gap: 1rem;
-		opacity: 0.8;
 	}
-	button.link {
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--accent);
+	@media (max-width: 760px) {
+		.layout {
+			grid-template-columns: 1fr;
+		}
 	}
 	.candidates {
 		list-style: none;
@@ -241,43 +188,18 @@
 		flex-direction: column;
 		gap: 0.5rem;
 	}
-	.candidates li {
-		border: 1px solid var(--line);
-		border-radius: 8px;
-	}
-	.entry-head {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.35rem 0.5rem 0.35rem 0;
-	}
-	.toggle {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		align-items: baseline;
-		gap: 0.6rem;
-		background: none;
-		border: none;
+	.candidates button {
+		width: 100%;
 		text-align: left;
-		white-space: nowrap;
-		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.6rem 0.75rem;
 	}
-	.toggle > span {
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.chevron {
-		display: inline-block;
-		flex-shrink: 0;
-		transition: transform 0.15s;
-		opacity: 0.6;
-	}
-	li.open .chevron {
-		transform: rotate(90deg);
+	.candidates button.selected {
+		outline: 2px solid var(--accent);
 	}
 	.score {
-		flex-shrink: 0;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}
@@ -291,20 +213,17 @@
 		color: var(--bad);
 	}
 	.title {
-		flex-shrink: 0;
-		max-width: 60%;
 		font-weight: 500;
 	}
 	.penalties {
 		font-size: 0.85em;
 		color: var(--warn);
 	}
-	.entry-body {
+	.detail {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0 0.75rem 0.75rem;
-		overflow-x: auto;
+		gap: 0.75rem;
+		min-width: 0;
 	}
 	table {
 		width: 100%;
@@ -339,6 +258,20 @@
 	}
 	.empty {
 		opacity: 0.8;
+	}
+	.primary {
+		align-self: flex-start;
+	}
+	.actions,
+	.searches {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.searches form {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 	}
 	dl {
 		display: grid;
