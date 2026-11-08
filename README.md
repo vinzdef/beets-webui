@@ -26,11 +26,14 @@ Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 
 ### Docker
 
+An example setup lives in `examples/docker/`:
+
 ```sh
+cd examples/docker
 docker compose up -d --build     # http://127.0.0.1:8338, restarts automatically
 ```
 
-Out of the box this is a local test environment:
+It's a self-contained test environment:
 
 - `config/config.yaml`: beets config with the MusicBrainz autotagger, fetchart and the web UI.
   The library database and logs are written next to it.
@@ -46,7 +49,7 @@ docker compose exec beets-webui beet import /inbox      # interactive, matches a
 ```
 
 To use a real library instead, set `BEETS_CONFIG_DIR`, `MUSIC_DIR` and `INBOX_DIR` (and the port
-with `WEBUI_PORT`), e.g. in a `.env` file next to `compose.yaml`. If `config.yaml` doesn't exist
+with `WEBUI_PORT`), e.g. in a `.env` file in `examples/docker/`. If `config.yaml` doesn't exist
 in the config dir, a minimal one is created. If you bring your own, list `musicbrainz` and `webui`
 in `plugins` (setting `plugins` replaces beets' default of `[musicbrainz]`), and use the container
 paths for `directory` and `library` (`/music`, `/config/library.db`).
@@ -84,8 +87,9 @@ src/beetsplug/webui/     beets plugin + FastAPI app
   app.py                 create_app(lib): routers + SPA static serving
   routes/                API routers (/api/...)
 frontend/                SvelteKit (static adapter, SPA mode)
-tests/                   pytest against an in-memory Library
-docker/                  entrypoint + default config
+tests/                   pytest against a temporary Library
+docker/                  image entrypoint + default config
+examples/docker/         compose test environment (config, inbox, music)
 ```
 
 ## Roadmap

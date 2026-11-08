@@ -4,6 +4,4 @@
 frontend/node_modules
 frontend/.svelte-kit
 src/beetsplug/webui/static
-config
-inbox
-music
+examples

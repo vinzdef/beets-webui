@@ -12,9 +12,9 @@ frontend/.svelte-kit/
 src/beetsplug/webui/static/
 
 # Local test environment: keep the config and folder placeholders, nothing else
-/config/*
-!/config/config.yaml
-/inbox/*
-!/inbox/.gitkeep
-/music/*
-!/music/.gitkeep
+/examples/docker/config/*
+!/examples/docker/config/config.yaml
+/examples/docker/inbox/*
+!/examples/docker/inbox/.gitkeep
+/examples/docker/music/*
+!/examples/docker/music/.gitkeep

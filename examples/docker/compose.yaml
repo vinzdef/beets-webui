@@ -1,6 +1,8 @@
+name: beets-webui
+
 services:
   beets-webui:
-    build: .
+    build: ../..
     image: beets-webui
     restart: unless-stopped
     ports:
