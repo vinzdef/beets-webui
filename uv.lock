@@ -102,7 +102,7 @@ lastgenre = [
 
 [[package]]
 name = "beets-webui"
-version = "2.14.0"
+version = "2.14.1"
 source = { editable = "." }
 dependencies = [
     { name = "beets" },
