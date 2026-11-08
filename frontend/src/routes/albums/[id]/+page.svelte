@@ -156,10 +156,17 @@
 		if (file) artAction(() => api.uploadArt(album!.id, file), 'Uploaded the cover.');
 	}
 
-	function trackNumber(item: Item) {
-		const disc = Number(item.disc);
-		return Number(album?.disctotal) > 1 && disc ? `${disc}-${item.track}` : String(item.track);
-	}
+	// The tracks by disc, as the match screen shows them; the server sends them in album order.
+	const discs = $derived.by(() => {
+		const groups: { disc: number; items: Item[] }[] = [];
+		for (const item of album?.items ?? []) {
+			const disc = Number(item.disc) || 1;
+			if (groups.at(-1)?.disc === disc) groups.at(-1)!.items.push(item);
+			else groups.push({ disc, items: [item] });
+		}
+		return groups;
+	});
+	const multiDisc = $derived(discs.length > 1);
 </script>
 
 {#if album}
@@ -293,19 +300,25 @@
 						<th>Artist</th>
 					</tr>
 				</thead>
-				<tbody>
-					{#each album.items as item (item.id)}
-						<tr>
-							<td class="num"><input bind:value={itemForms[item.id].disc} inputmode="numeric" /></td
-							>
-							<td class="num"
-								><input bind:value={itemForms[item.id].track} inputmode="numeric" /></td
-							>
-							<td><input bind:value={itemForms[item.id].title} /></td>
-							<td><input bind:value={itemForms[item.id].artist} /></td>
-						</tr>
-					{/each}
-				</tbody>
+				{#each discs as group (group.disc)}
+					<tbody>
+						{#if multiDisc}
+							<tr class="disc"><th colspan="4">Disc {group.disc}</th></tr>
+						{/if}
+						{#each group.items as item (item.id)}
+							<tr>
+								<td class="num"
+									><input bind:value={itemForms[item.id].disc} inputmode="numeric" /></td
+								>
+								<td class="num"
+									><input bind:value={itemForms[item.id].track} inputmode="numeric" /></td
+								>
+								<td><input bind:value={itemForms[item.id].title} /></td>
+								<td><input bind:value={itemForms[item.id].artist} /></td>
+							</tr>
+						{/each}
+					</tbody>
+				{/each}
 			</table>
 			<p class="meta">
 				Saving writes the tags to the files and, if your import settings move or copy files, renames
@@ -318,16 +331,21 @@
 		</form>
 	{:else}
 		<table>
-			<tbody>
-				{#each album.items as item (item.id)}
-					<tr>
-						<td class="num">{trackNumber(item)}</td>
-						<td><a href="/songs/{item.id}">{item.title}</a></td>
-						<td>{item.artist}</td>
-						<td class="num">{formatLength(item.length)}</td>
-					</tr>
-				{/each}
-			</tbody>
+			{#each discs as group (group.disc)}
+				<tbody>
+					{#if multiDisc}
+						<tr class="disc"><th colspan="4">Disc {group.disc}</th></tr>
+					{/if}
+					{#each group.items as item (item.id)}
+						<tr>
+							<td class="num">{item.track || ''}</td>
+							<td><a href="/songs/{item.id}">{item.title}</a></td>
+							<td>{item.artist}</td>
+							<td class="num">{formatLength(item.length)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			{/each}
 		</table>
 	{/if}
 {:else if error}
@@ -432,6 +450,16 @@
 	}
 	.notice {
 		color: var(--ok);
+	}
+	tr.disc th {
+		text-align: left;
+		font-weight: 600;
+		opacity: 1;
+		padding-top: 1rem;
+		border-bottom: 2px solid color-mix(in srgb, currentColor 15%, transparent);
+	}
+	tbody:first-of-type tr.disc th {
+		padding-top: 0.3rem;
 	}
 	.problems {
 		border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
