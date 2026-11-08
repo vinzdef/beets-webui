@@ -38,3 +38,165 @@ export const api = {
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
 	artUrl: (id: number) => `/api/albums/${id}/art`
 };
+
+// Imports
+
+export interface InboxEntry {
+	name: string;
+	path: string;
+	is_dir: boolean;
+}
+
+export interface InboxRoot {
+	path: string;
+	exists: boolean;
+	entries: InboxEntry[];
+}
+
+export interface ImportItem {
+	path: string;
+	title: string;
+	artist: string;
+	album: string;
+	track: number;
+	disc: number;
+	length: number;
+	format: string;
+	bitrate: number;
+}
+
+export interface ImportTrack {
+	title: string | null;
+	artist: string | null;
+	index: number | null;
+	medium: number | null;
+	medium_index: number | null;
+	length: number | null;
+}
+
+export interface Candidate {
+	index: number;
+	distance: number;
+	similarity: number;
+	strength: 'strong' | 'medium' | 'weak';
+	penalties: string[];
+	disambig: string;
+	artist: string;
+	name: string;
+	id: string | null;
+	data_source: string | null;
+	// Albums
+	year?: number | null;
+	label?: string | null;
+	country?: string | null;
+	media?: string | null;
+	albumtype?: string | null;
+	tracks?: { item: ImportItem; track: ImportTrack }[];
+	extra_items?: ImportItem[];
+	extra_tracks?: ImportTrack[];
+	// Singletons
+	album?: string | null;
+	length?: number | null;
+}
+
+export interface ImportTask {
+	kind: 'album' | 'track';
+	paths: string[];
+	artist: string;
+	name: string;
+	items: ImportItem[];
+}
+
+export interface MatchQuestion {
+	id: number;
+	kind: 'match';
+	task: ImportTask;
+	recommendation: string;
+	candidates: Candidate[];
+	choices: { short: string; long: string }[];
+}
+
+export interface DuplicateQuestion {
+	id: number;
+	kind: 'duplicate';
+	task: ImportTask;
+	existing: { summary: string; description: string }[];
+	new: string;
+	options: { value: string; label: string }[];
+}
+
+export interface ResumeQuestion {
+	id: number;
+	kind: 'resume';
+	path: string;
+}
+
+export type Question = MatchQuestion | DuplicateQuestion | ResumeQuestion;
+
+export interface LogEntry {
+	time: number;
+	kind: string;
+	message: string;
+	level?: string;
+	album_id?: number;
+	item_id?: number;
+}
+
+export interface ImportJob {
+	status: 'running' | 'waiting' | 'done' | 'aborted' | 'failed';
+	paths: string[];
+	options: Record<string, boolean>;
+	error: string | null;
+	started: number;
+	finished: number | null;
+	question: Question | null;
+	log: LogEntry[];
+}
+
+export interface StartOptions {
+	timid?: boolean;
+	singletons?: boolean;
+	group_albums?: boolean;
+}
+
+export type AnswerBody =
+	| { type: 'apply'; candidate: number }
+	| { type: 'choice'; short: string }
+	| { type: 'search'; artist: string; name: string }
+	| { type: 'id'; ids: string }
+	| { type: 'duplicate'; action: string }
+	| { type: 'resume'; resume: boolean };
+
+async function post<T>(path: string, body: unknown = {}): Promise<T> {
+	const res = await fetch(`/api${path}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const detail = await res.json().catch(() => null);
+		throw new Error(detail?.detail ?? `${res.status} ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export const imports = {
+	inbox: () => get<{ roots: InboxRoot[] }>('/inbox'),
+	start: (paths: string[], options: StartOptions) =>
+		post<ImportJob>('/imports', { paths, ...options }),
+	answer: (question: number, body: AnswerBody) =>
+		post('/imports/current/answer', { question, ...body }),
+	abort: () => post('/imports/current/abort'),
+	/** Calls `onJob` with the current job (or null) now and whenever it changes. */
+	subscribe(onJob: (job: ImportJob | null) => void): () => void {
+		const source = new EventSource('/api/imports/current/events');
+		source.onmessage = (e) => onJob(JSON.parse(e.data));
+		return () => source.close();
+	}
+};
+
+export function formatLength(seconds: number | null | undefined): string {
+	if (seconds == null) return '';
+	const s = Math.round(seconds);
+	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}

@@ -15,6 +15,8 @@ class WebUIPlugin(BeetsPlugin):
             {
                 "host": "127.0.0.1",
                 "port": 8338,
+                # Directories the UI may import from. Imports are refused outside these.
+                "inbox": [],
             }
         )
 
@@ -30,7 +32,14 @@ class WebUIPlugin(BeetsPlugin):
             port = int(args.pop(0)) if args else self.config["port"].get(int)
 
             self._log.info("serving on http://{}:{}", host, port)
-            uvicorn.run(create_app(lib), host=host, port=port, log_level="info")
+            uvicorn.run(
+                create_app(lib),
+                host=host,
+                port=port,
+                log_level="info",
+                # Event streams never end on their own; don't let them block shutdown.
+                timeout_graceful_shutdown=3,
+            )
 
         cmd.func = func
         return [cmd]

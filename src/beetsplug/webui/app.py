@@ -1,19 +1,29 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from beets.library import Library
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from .routes import library
+from .imports import ImportManager
+from .routes import imports, library
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app(lib: Library) -> FastAPI:
-    app = FastAPI(title="beets web UI")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        # Release an import blocked on a question, or its pipeline threads keep the process alive.
+        app.state.imports.shutdown()
+
+    app = FastAPI(title="beets web UI", lifespan=lifespan)
     app.state.lib = lib
+    app.state.imports = ImportManager(lib)
 
     app.include_router(library.router, prefix="/api")
+    app.include_router(imports.router, prefix="/api")
 
     @app.get("/api/health")
     def health():

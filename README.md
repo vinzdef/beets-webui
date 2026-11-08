@@ -20,6 +20,7 @@ plugins: webui   # alongside your other plugins
 webui:
   host: 127.0.0.1
   port: 8338
+  inbox: [~/Music/inbox]   # folders the UI may import from
 ```
 
 Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
@@ -97,9 +98,12 @@ examples/docker/         compose test environment (config, inbox, music)
 - [x] Browse/search albums and items using beets query syntax
 - [ ] Edit metadata: `PATCH /api/items/{id}` and `/api/albums/{id}`, then `item.try_sync(write, move)`
       to mirror `beet modify`, with bulk edits over a query
-- [ ] Imports: start `beet import` jobs on a path and stream their progress
-- [ ] Interactive imports with the same choices as the CLI; see
+- [x] Imports from configured inbox folders, with live progress
+- [x] Interactive matching with the CLI's choices: apply a candidate, skip, as-is, as tracks, group
+      albums, rescan, search by name or ID, plugin choices, duplicates, resume; see
       [docs/interactive-import.md](docs/interactive-import.md)
-- [ ] Security before any write endpoint: CSRF/Origin checks, Host validation, auth for `0.0.0.0`
+- [ ] Forward plugin terminal prompts (`badfiles`, …) to the browser
+- [ ] Security: Host validation and authentication before binding to `0.0.0.0`
+      (cross-origin writes are already refused)
 
 beets is pinned to 2.14.x because the importer API changes between minor releases.

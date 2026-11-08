@@ -1,5 +1,13 @@
 # Interactive import design
 
+Implemented in `src/beetsplug/webui/imports.py` (session and job) and `routes/imports.py` (API).
+Still open: forwarding terminal prompts from plugins, blocking edits to items in an active import,
+Host validation and authentication.
+
+API: `GET /api/inbox`, `POST /api/imports`, `GET /api/imports/current`, server-sent events at
+`GET /api/imports/current/events` (the full job state on every change), and
+`POST /api/imports/current/answer` / `abort`.
+
 Goal: the choices `beet import` offers at the terminal, made from the browser. Verified against
 beets 2.14.1; the importer API changes between minor releases, so beets is pinned to `>=2.14,<2.15`.
 

@@ -1,0 +1,178 @@
+"""Endpoints for starting imports and answering their questions."""
+
+import json
+import os
+from pathlib import Path
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
+
+import anyio
+import confuse
+from beets import config
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from ..imports import ImportBusyError, ImportManager
+
+router = APIRouter()
+
+# How long an event stream waits for a change before sending a keep-alive comment.
+KEEPALIVE_SECONDS = 15
+
+
+def require_same_origin(request: Request) -> None:
+    """Reject cross-site requests: these endpoints read, copy and move files."""
+    origin = request.headers.get("origin")
+    if origin is not None and urlsplit(origin).netloc != request.headers.get("host"):
+        raise HTTPException(403, "cross-origin request refused")
+
+
+def get_manager(request: Request) -> ImportManager:
+    return request.app.state.imports
+
+
+Manager = Annotated[ImportManager, Depends(get_manager)]
+
+
+def inbox_dirs() -> list[Path]:
+    try:
+        dirs = config["webui"]["inbox"].as_str_seq()
+    except confuse.NotFoundError:
+        return []
+    return [Path(os.path.expanduser(d)).resolve() for d in dirs]
+
+
+def resolve_in_inbox(path: str) -> Path:
+    resolved = Path(path).resolve()
+    if not any(resolved == d or resolved.is_relative_to(d) for d in inbox_dirs()):
+        raise HTTPException(400, f"not inside an inbox directory: {path}")
+    if not resolved.exists():
+        raise HTTPException(400, f"no such file or directory: {path}")
+    return resolved
+
+
+@router.get("/inbox")
+def list_inbox():
+    roots = []
+    for root in inbox_dirs():
+        entries = []
+        if root.is_dir():
+            for entry in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                entries.append({"name": entry.name, "path": str(entry), "is_dir": entry.is_dir()})
+        roots.append({"path": str(root), "exists": root.is_dir(), "entries": entries})
+    return {"roots": roots}
+
+
+class StartImport(BaseModel):
+    paths: list[str]
+    # Unset options keep whatever the beets config says.
+    timid: bool | None = None
+    singletons: bool | None = None
+    group_albums: bool | None = None
+
+
+@router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)
+def start_import(body: StartImport, manager: Manager):
+    if not body.paths:
+        raise HTTPException(400, "no paths given")
+    paths = [str(resolve_in_inbox(p)) for p in body.paths]
+    options = body.model_dump(exclude={"paths"}, exclude_none=True)
+    try:
+        job = manager.start(paths, options)
+    except ImportBusyError:
+        raise HTTPException(409, "an import is already running") from None
+    return job.snapshot()
+
+
+@router.get("/imports/current")
+def current_import(manager: Manager):
+    return manager.job.snapshot() if manager.job else None
+
+
+@router.get("/imports/current/events")
+async def import_events(request: Request, manager: Manager):
+    """Server-sent events: the current job's full state, each time it changes."""
+
+    async def stream():
+        version = -1
+        while not await request.is_disconnected():
+            new_version = await anyio.to_thread.run_sync(
+                manager.wait_for_change, version, KEEPALIVE_SECONDS
+            )
+            if new_version == version:
+                yield ": keep-alive\n\n"
+                continue
+            version = new_version
+            snapshot = manager.job.snapshot() if manager.job else None
+            yield f"data: {json.dumps(snapshot)}\n\n"
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )
+
+
+class Answer(BaseModel):
+    question: int
+    type: Literal["apply", "choice", "search", "id", "duplicate", "resume"]
+    candidate: int | None = None
+    short: str | None = None
+    artist: str = ""
+    name: str = ""
+    ids: str = ""
+    action: str | None = None
+    resume: bool | None = None
+
+
+@router.post("/imports/current/answer", dependencies=[Depends(require_same_origin)])
+def answer_question(body: Answer, manager: Manager):
+    job = manager.job
+    question = job.question if job else None
+    if question is None or question["id"] != body.question:
+        raise HTTPException(409, "that question is no longer open")
+
+    answer = validate_answer(question, body)
+    try:
+        job.answer(body.question, answer)
+    except LookupError:
+        raise HTTPException(409, "that question is no longer open") from None
+    return {"ok": True}
+
+
+@router.post("/imports/current/abort", dependencies=[Depends(require_same_origin)])
+def abort_import(manager: Manager):
+    if manager.job is None or not manager.job.active:
+        raise HTTPException(409, "no import is running")
+    manager.job.abort()
+    return {"ok": True}
+
+
+def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
+    """Check an answer against the open question before it reaches the import thread."""
+    kind = question["kind"]
+    if kind == "match":
+        if body.type == "apply":
+            if body.candidate is None or not 0 <= body.candidate < len(question["candidates"]):
+                raise HTTPException(400, "invalid candidate")
+            return {"type": "apply", "candidate": body.candidate}
+        if body.type == "choice":
+            if body.short not in {c["short"] for c in question["choices"]}:
+                raise HTTPException(400, "invalid choice")
+            return {"type": "choice", "short": body.short}
+        if body.type == "search":
+            if not (body.artist.strip() or body.name.strip()):
+                raise HTTPException(400, "enter an artist or a name to search for")
+            return {"type": "search", "artist": body.artist, "name": body.name}
+        if body.type == "id":
+            if not body.ids.strip():
+                raise HTTPException(400, "enter an ID")
+            return {"type": "id", "ids": body.ids}
+    elif kind == "duplicate" and body.type == "duplicate":
+        if body.action not in {o["value"] for o in question["options"]}:
+            raise HTTPException(400, "invalid duplicate action")
+        return {"action": body.action}
+    elif kind == "resume" and body.type == "resume" and body.resume is not None:
+        return {"resume": body.resume}
+    raise HTTPException(400, f"invalid answer for a {kind} question")

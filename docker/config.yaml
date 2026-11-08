@@ -3,3 +3,6 @@ library: /config/library.db
 
 # Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
 plugins: musicbrainz webui
+
+webui:
+  inbox: /inbox

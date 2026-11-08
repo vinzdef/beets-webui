@@ -13,3 +13,6 @@ import:
 
 fetchart:
   auto: yes
+
+webui:
+  inbox: /inbox
