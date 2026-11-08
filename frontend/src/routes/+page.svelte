@@ -1,17 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type Album, type AlbumOrder, type LibraryUpdatePreview, type Page } from '$lib/api';
+	import {
+		api,
+		formatLength,
+		type Album,
+		type AlbumOrder,
+		type Item,
+		type LibraryUpdatePreview,
+		type Page
+	} from '$lib/api';
 
-	type Grouping = 'album' | 'artist' | 'path';
+	// 'song' lists tracks instead of albums.
+	type Grouping = 'album' | 'artist' | 'path' | 'song';
 	const groupings: { value: Grouping; label: string }[] = [
 		{ value: 'album', label: 'Albums' },
 		{ value: 'artist', label: 'Artists' },
-		{ value: 'path', label: 'Folders' }
+		{ value: 'path', label: 'Folders' },
+		{ value: 'song', label: 'Songs' }
 	];
 
 	let query = $state('');
 	let grouping = $state<Grouping>(storedGrouping());
 	let page = $state<Page<Album> | null>(null);
+	let songs = $state<Page<Item> | null>(null);
 	let loadingMore = $state(false);
 	let error = $state<string | null>(null);
 
@@ -44,18 +55,26 @@
 	async function search() {
 		error = null;
 		try {
-			page = await api.albums(query, grouping satisfies AlbumOrder);
+			if (grouping === 'song') songs = await api.items(query, 0, SONG_PAGE);
+			else page = await api.albums(query, grouping satisfies AlbumOrder);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
 
+	// Rows are short, so songs load in bigger pages than album covers.
+	const SONG_PAGE = 500;
+
 	async function loadMore() {
-		if (!page) return;
 		loadingMore = true;
 		try {
-			const next = await api.albums(query, grouping, page.results.length, page.limit);
-			page = { ...next, results: [...page.results, ...next.results] };
+			if (grouping === 'song' && songs) {
+				const next = await api.items(query, songs.results.length, SONG_PAGE);
+				songs = { ...next, results: [...songs.results, ...next.results] };
+			} else if (grouping !== 'song' && page) {
+				const next = await api.albums(query, grouping, page.results.length, page.limit);
+				page = { ...next, results: [...page.results, ...next.results] };
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -71,9 +90,11 @@
 	}
 
 	// The loaded albums in runs that share a heading; the server sorts them so each run is whole.
+	const shown = $derived(grouping === 'song' ? songs : page);
+
 	const groups = $derived.by(() => {
 		const albums = page?.results ?? [];
-		if (grouping === 'album') return [{ name: '', albums }];
+		if (grouping === 'album' || grouping === 'song') return [{ name: '', albums }];
 		const runs: { name: string; albums: Album[] }[] = [];
 		for (const album of albums) {
 			const name = groupOf(album);
@@ -141,13 +162,44 @@
 			>
 		{/each}
 	</div>
-	{#if page}<span class="meta">{page.total} albums</span>{/if}
+	{#if shown}<span class="meta">{plural(shown.total, grouping === 'song' ? 'song' : 'album')}</span
+		>{/if}
 </div>
 
 {#if updated}<p class="meta">{updated}</p>{/if}
 
 {#if error}
 	<p class="error">{error}</p>
+{:else if grouping === 'song'}
+	{#if songs}
+		<table class="songs">
+			<thead>
+				<tr>
+					<th class="num">#</th>
+					<th>Title</th>
+					<th>Artist</th>
+					<th class="album">Album</th>
+					<th class="num year">Year</th>
+					<th class="num">Time</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each songs.results as song (song.id)}
+					<tr title={song.path ?? undefined}>
+						<td class="num">{song.track || ''}</td>
+						<td>{song.title}</td>
+						<td>{song.artist}</td>
+						<td class="album">
+							{#if song.album_id}<a href="/albums/{song.album_id}">{song.album}</a
+								>{:else}{song.album}{/if}
+						</td>
+						<td class="num year">{song.year || ''}</td>
+						<td class="num">{formatLength(song.length)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
 {:else if page}
 	{#each groups as group, i (i)}
 		<section>
@@ -172,11 +224,11 @@
 			</ul>
 		</section>
 	{/each}
-	{#if page.results.length < page.total}
-		<button class="more" disabled={loadingMore} onclick={loadMore}>
-			{loadingMore ? 'Loading…' : `Show more (${page.total - page.results.length} left)`}
-		</button>
-	{/if}
+{/if}
+{#if !error && shown && shown.results.length < shown.total}
+	<button class="more" disabled={loadingMore} onclick={loadMore}>
+		{loadingMore ? 'Loading…' : `Show more (${shown.total - shown.results.length} left)`}
+	</button>
 {/if}
 
 <dialog bind:this={dialog}>
@@ -304,6 +356,43 @@
 	.grid span {
 		opacity: 0.7;
 		font-size: 0.9em;
+	}
+	.songs {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+		font-size: 0.9em;
+	}
+	.songs th {
+		text-align: left;
+		font-weight: 500;
+		opacity: 0.6;
+	}
+	.songs th,
+	.songs td {
+		padding: 0.2rem 0.5rem;
+		border-bottom: 1px solid var(--line);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.songs tbody tr:hover {
+		background: var(--subtle);
+	}
+	.songs .num {
+		width: 3rem;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		opacity: 0.7;
+	}
+	.songs a {
+		color: inherit;
+	}
+	@media (max-width: 640px) {
+		.songs .album,
+		.songs .year {
+			display: none;
+		}
 	}
 	.more {
 		display: block;
