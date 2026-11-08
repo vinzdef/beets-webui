@@ -1,15 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { imports, type AnswerBody, type ImportJob, type Inbox } from '$lib/api';
+	import { imports, type AnswerBody, type ImportJob, type ImportMode, type Inbox } from '$lib/api';
 	import MatchQuestion from '$lib/import/MatchQuestion.svelte';
 	import OtherQuestion from '$lib/import/OtherQuestion.svelte';
 
 	let job = $state<ImportJob | null>(null);
 	let inboxes = $state<Inbox[]>([]);
 	let selected = $state<string[]>([]);
-	type AskMode = 'exact' | 'config' | 'always';
-	const ASK_MODE_KEY = 'beets-webui.import.ask';
-	let askMode = $state<AskMode>(loadAskMode());
+	const MODE_KEY = 'beets-webui.import.mode';
+	let mode = $state<ImportMode>(loadMode());
 	let singletons = $state(false);
 	let groupAlbums = $state(false);
 	let error = $state<string | null>(null);
@@ -17,20 +16,24 @@
 
 	$effect(() => {
 		try {
-			localStorage.setItem(ASK_MODE_KEY, askMode);
+			localStorage.setItem(MODE_KEY, mode);
 		} catch {
 			// Storage can be unavailable (private windows); the default is fine then.
 		}
 	});
 
-	function loadAskMode(): AskMode {
+	function loadMode(): ImportMode {
 		try {
-			const saved = localStorage.getItem(ASK_MODE_KEY);
-			if (saved === 'exact' || saved === 'config' || saved === 'always') return saved;
+			const saved = localStorage.getItem(MODE_KEY);
+			if (saved === 'auto' || saved === 'manual' || saved === 'timid') return saved;
+			// Names used before the modes were renamed.
+			const legacy = localStorage.getItem('beets-webui.import.ask');
+			const renamed = { exact: 'manual', config: 'auto', always: 'timid' } as const;
+			if (legacy && legacy in renamed) return renamed[legacy as keyof typeof renamed];
 		} catch {
 			// See above.
 		}
-		return 'exact';
+		return 'manual';
 	}
 
 	const active = $derived(job?.status === 'running' || job?.status === 'waiting');
@@ -73,8 +76,7 @@
 	function start() {
 		// Unchecked options are left out so the beets config decides.
 		const options = {
-			...(askMode === 'exact' && { timid: false, exact_only: true }),
-			...(askMode === 'always' && { timid: true }),
+			mode,
 			...(singletons && { singletons: true }),
 			...(groupAlbums && { group_albums: true })
 		};
@@ -159,18 +161,21 @@
 
 		{#if inboxes.length}
 			<fieldset>
-				<legend>Ask me about a match</legend>
+				<legend>Mode</legend>
 				<label>
-					<input type="radio" value="exact" bind:group={askMode} />
-					Unless it's an exact (100%) match
+					<input type="radio" value="auto" bind:group={mode} />
+					<span
+						><strong>Auto</strong> · matches above the strong-match threshold in your beets config are
+						applied automatically</span
+					>
 				</label>
 				<label>
-					<input type="radio" value="config" bind:group={askMode} />
-					As my beets config says (strong matches, about 96% and up, are applied)
+					<input type="radio" value="manual" bind:group={mode} />
+					<span><strong>Manual</strong> · approve every match that isn't 100%</span>
 				</label>
 				<label>
-					<input type="radio" value="always" bind:group={askMode} />
-					Always (timid)
+					<input type="radio" value="timid" bind:group={mode} />
+					<span><strong>Timid</strong> · approve every match</span>
 				</label>
 			</fieldset>
 			<fieldset>

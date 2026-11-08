@@ -154,12 +154,16 @@ export interface ImportJob {
 	log: LogEntry[];
 }
 
+/**
+ * auto: apply matches above the configured strong-match threshold unasked;
+ * manual: apply only perfect (100%) matches unasked; timid: ask about every match.
+ */
+export type ImportMode = 'auto' | 'manual' | 'timid';
+
 export interface StartOptions {
-	timid?: boolean;
+	mode?: ImportMode;
 	singletons?: boolean;
 	group_albums?: boolean;
-	/** Only apply perfect (100%) matches without asking. */
-	exact_only?: boolean;
 }
 
 export type AnswerBody =

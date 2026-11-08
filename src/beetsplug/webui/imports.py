@@ -178,18 +178,26 @@ class ImportJob:
         )
 
 
-IMPORT_OPTIONS = {"timid", "singletons", "group_albums"}
+IMPORT_OPTIONS = {"singletons", "group_albums"}
 # beets treats a match as strong (and applies it unasked) when its distance is *below* this
 # threshold, so anything above zero admits only a perfect match.
 EXACT_MATCH_THRESHOLD = 1e-9
 
 
 def config_overrides(options: dict[str, Any]) -> dict[str, Any]:
-    """Turn per-import options from the UI into beets config for the session."""
+    """Turn per-import options from the UI into beets config for the session.
+
+    Modes: "auto" applies matches above the configured strong-match threshold unasked, "manual"
+    applies only perfect (100%) matches unasked, and "timid" asks about every match. Without a
+    mode, the beets config decides.
+    """
     overrides: dict[str, Any] = {
         "import": {k: v for k, v in options.items() if k in IMPORT_OPTIONS}
     }
-    if options.get("exact_only"):
+    mode = options.get("mode")
+    if mode is not None:
+        overrides["import"]["timid"] = mode == "timid"
+    if mode == "manual":
         overrides["match"] = {"strong_rec_thresh": EXACT_MATCH_THRESHOLD}
     return overrides
 

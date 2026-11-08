@@ -281,27 +281,36 @@ def stub_candidate(matcher, monkeypatch, album_name):
 
 
 @pytest.mark.parametrize(
-    ("album_name", "exact_only", "asked"),
+    ("album_name", "mode", "asked"),
     [
-        ("Tag Album", False, False),  # perfect match: applied unasked
-        ("Tag Album", True, False),  # ...in either mode
-        ("Tag Albun", False, False),  # strong but imperfect: beets applies it unasked
-        ("Tag Albun", True, True),  # ...but exact-only mode asks
+        ("Tag Album", "auto", False),  # perfect match: applied unasked
+        ("Tag Album", "manual", False),
+        ("Tag Album", "timid", True),  # timid asks about everything
+        ("Tag Albun", "auto", False),  # strong but imperfect: auto applies it unasked
+        ("Tag Albun", "manual", True),  # ...manual asks
+        ("Tag Albun", "timid", True),
     ],
 )
-def test_exact_only(
-    client, lib, album, matcher, monkeypatch, config, album_name, exact_only, asked
-):
+def test_modes(client, lib, album, matcher, monkeypatch, config, album_name, mode, asked):
     stub_candidate(matcher, monkeypatch, album_name)
-    body = {"paths": [str(album)], "timid": False, "exact_only": exact_only}
-    client.post("/api/imports", json=body).raise_for_status()
+    client.post("/api/imports", json={"paths": [str(album)], "mode": mode}).raise_for_status()
     state = wait_for(client, lambda s: s["question"] or s["status"] == "done")
 
     assert bool(state["question"]) == asked, state
     if asked:
-        assert 0 < state["question"]["candidates"][0]["distance"] < 0.04
         client.post("/api/imports/current/abort").raise_for_status()
     else:
         assert [a.album for a in lib.albums()] == [album_name]
     finished(client)
     assert config["match"]["strong_rec_thresh"].as_number() == 0.04  # restored after the import
+    assert config["import"]["timid"].get() is True
+
+
+def test_relative_inbox_paths_resolve_against_config_dir(client, config, tmp_path):
+    # Loaded from a file like the user's config.yaml; values set in code resolve against the cwd.
+    config_file = tmp_path / "beets" / "config.yaml"
+    config_file.parent.mkdir()
+    config_file.write_text("webui:\n  inboxes:\n    Relative: relinbox\n")
+    config.set_file(config_file)
+    inbox = client.get("/api/inboxes").json()["inboxes"][-1]
+    assert inbox["path"] == str((tmp_path / "beets" / "relinbox").resolve())

@@ -1,7 +1,6 @@
 """Endpoints for starting imports and answering their questions."""
 
 import json
-import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -37,18 +36,18 @@ Manager = Annotated[ImportManager, Depends(get_manager)]
 
 def configured_inboxes() -> dict[str, Path]:
     """The inboxes from `webui.inboxes`, a mapping of name to folder, in config order."""
+    view = config["webui"]["inboxes"]
     try:
-        inboxes = config["webui"]["inboxes"].get(dict)
+        names = list(view.get(dict))
     except confuse.NotFoundError:
         return {}
     except confuse.ConfigTypeError:
         raise HTTPException(
             500, "webui.inboxes must be a mapping of names to folders, e.g. Downloads: ~/Downloads"
         ) from None
-    return {
-        str(name): Path(os.path.expanduser(str(folder))).resolve()
-        for name, folder in inboxes.items()
-    }
+    # as_filename expands ~ and resolves relative paths against the beets config directory,
+    # like beets does for `directory` and `library`.
+    return {str(name): Path(view[name].as_filename()).resolve() for name in names}
 
 
 def resolve_in_inbox(path: str) -> Path:
@@ -80,11 +79,10 @@ def list_inboxes():
 class StartImport(BaseModel):
     paths: list[str]
     # Unset options keep whatever the beets config says.
-    timid: bool | None = None
+    # auto: apply strong matches unasked; manual: only perfect ones; timid: ask about all.
+    mode: Literal["auto", "manual", "timid"] | None = None
     singletons: bool | None = None
     group_albums: bool | None = None
-    # Apply matches unasked only when they're perfect (100%); ask about everything else.
-    exact_only: bool | None = None
 
 
 @router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)

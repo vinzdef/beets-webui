@@ -29,6 +29,19 @@ Imports are refused for paths outside these folders.
 
 Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 
+### Without Docker
+
+`examples/local/` is a ready-made beets setup with its own config, inbox and library folder:
+
+```sh
+(cd frontend && pnpm install && pnpm build)
+BEETSDIR=examples/local uv run beet webui       # http://127.0.0.1:8338
+```
+
+`BEETSDIR` points beets at that folder instead of `~/.config/beets`, so your real library isn't
+touched. Put albums in `examples/local/inbox/`. If the Docker example is already using port 8338,
+pass another one: `beet webui 127.0.0.1 8339`.
+
 ### Docker
 
 An example setup lives in `examples/docker/`:
@@ -96,6 +109,7 @@ frontend/                SvelteKit (static adapter, SPA mode)
 tests/                   pytest against a temporary Library
 docker/                  image entrypoint + default config
 examples/docker/         compose test environment (config, inbox, music)
+examples/local/          the same without Docker (BEETSDIR=examples/local)
 ```
 
 ## Roadmap

@@ -1,0 +1,21 @@
+# beets config for running the web UI without Docker, from the repository root:
+#   BEETSDIR=examples/local uv run beet webui
+# Relative paths resolve against this folder.
+directory: music
+library: library.db
+
+# Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
+plugins: musicbrainz fetchart webui
+
+import:
+  # Copy rather than move, so inbox/ survives for re-imports after wiping music/ and the library.
+  copy: yes
+  write: yes
+  log: import.log
+
+fetchart:
+  auto: yes
+
+webui:
+  inboxes:
+    Inbox: inbox

@@ -68,12 +68,19 @@ class (defined in `importer/session.py`): `importer/tasks.py` defines a second, 
 `ImportAbortError` that `run()` does not catch. Release every blocked hook this way on server
 shutdown, or the process hangs waiting for pipeline threads.
 
-## Exact-only mode
+## Modes
 
-Besides beets' own modes (apply strong matches unasked, or `timid`: always ask), an import can be
-started with `exact_only`. It sets `match.strong_rec_thresh` just above zero for the session.
-beets counts a match as strong when its distance is *below* the threshold, so only a perfect match
-(distance 0, shown as 100%) is applied unasked, and everything else gets the match screen.
+An import is started in one of three modes (`mode` in `POST /api/imports`):
+
+- `auto`: beets' normal behaviour. Matches above the configured strong-match threshold
+  (`match.strong_rec_thresh`, 96% by default) are applied unasked.
+- `manual`: only perfect matches (100%) are applied unasked. The session sets
+  `match.strong_rec_thresh` just above zero; beets counts a match as strong when its distance is
+  *below* the threshold, so only a distance of 0 qualifies.
+- `timid`: every match is shown for approval.
+
+Every mode sets `import.timid` explicitly, so the beets config can't change what the UI shows.
+Without a mode the beets config decides.
 
 ## Global state
 

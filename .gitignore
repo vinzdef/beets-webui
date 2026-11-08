@@ -11,10 +11,18 @@ frontend/node_modules/
 frontend/.svelte-kit/
 src/beetsplug/webui/static/
 
-# Local test environment: keep the config and folder placeholders, nothing else
+# Example environments: keep the configs and folder placeholders, nothing else
 /examples/docker/config/*
 !/examples/docker/config/config.yaml
 /examples/docker/inbox/*
 !/examples/docker/inbox/.gitkeep
 /examples/docker/music/*
 !/examples/docker/music/.gitkeep
+/examples/local/*
+!/examples/local/config.yaml
+!/examples/local/inbox/
+/examples/local/inbox/*
+!/examples/local/inbox/.gitkeep
+!/examples/local/music/
+/examples/local/music/*
+!/examples/local/music/.gitkeep
