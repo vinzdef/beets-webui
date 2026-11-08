@@ -276,8 +276,6 @@ export interface StartOptions {
 	mode?: ImportMode;
 	singletons?: boolean;
 	group_albums?: boolean;
-	/** Import files an album match has no track for (bonus tracks) with the album. */
-	keep_unmatched?: boolean;
 }
 
 export type AnswerBody =

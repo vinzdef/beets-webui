@@ -9,19 +9,28 @@
 		type MatchQuestion
 	} from '$lib/api';
 
-	let {
-		question,
-		keepUnmatched: keepDefault = false,
-		onanswer
-	}: {
-		question: MatchQuestion;
-		/** The import's choice for files the release doesn't have; each question can change it. */
-		keepUnmatched?: boolean;
-		onanswer: (body: AnswerBody) => void;
-	} = $props();
+	let { question, onanswer }: { question: MatchQuestion; onanswer: (body: AnswerBody) => void } =
+		$props();
 
-	// svelte-ignore state_referenced_locally
-	let keepUnmatched = $state(keepDefault);
+	// Whether to keep files the release doesn't have; the last choice is remembered.
+	const KEEP_KEY = 'beets-webui.import.keepUnmatched';
+	let keepUnmatched = $state(loadKeep());
+
+	function loadKeep() {
+		try {
+			return localStorage.getItem(KEEP_KEY) === 'true';
+		} catch {
+			return false; // Storage can be unavailable (private windows).
+		}
+	}
+
+	$effect(() => {
+		try {
+			localStorage.setItem(KEEP_KEY, String(keepUnmatched));
+		} catch {
+			// Not remembered, but still applied.
+		}
+	});
 
 	let selected = $state(0);
 	let searchArtist = $state('');

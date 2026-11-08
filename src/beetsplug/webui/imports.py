@@ -369,15 +369,15 @@ class WebImportSession(ImportSession):
         if actions:
             return self._chose(task, actions[0], "a plugin")
 
-        # The import's choice for matches applied without asking; each answer can override it.
-        keep_unmatched = bool(self.job.options.get("keep_unmatched"))
+        # Matches applied without asking leave out files the release doesn't have, as in beets
+        # (the log says which); keeping them is a choice made on the match screen.
         action = summary_judgment(task.rec)
         if action is Action.APPLY:
-            return self._chose(task, task.candidates[0], "quiet mode", keep_unmatched)
+            return self._chose(task, task.candidates[0], "quiet mode")
         if action is not None:
             return self._chose(task, action, "configuration")
         if task.rec == Recommendation.strong and not config["import"]["timid"]:
-            return self._chose(task, task.candidates[0], "strong match", keep_unmatched)
+            return self._chose(task, task.candidates[0], "strong match")
 
         while True:
             choices = self._choices(task)
@@ -395,11 +395,10 @@ class WebImportSession(ImportSession):
 
             kind = answer["type"]
             if kind == "apply":
-                keep = answer.get("keep_unmatched")
                 return self._chose(
                     task,
                     task.candidates[answer["candidate"]],
-                    keep_unmatched=keep_unmatched if keep is None else keep,
+                    keep_unmatched=bool(answer.get("keep_unmatched")),
                 )
             if kind == "choice":
                 choice = next(c for c in choices if c.short == answer["short"])

@@ -87,10 +87,6 @@ class StartImport(BaseModel):
     mode: Literal["auto", "manual", "timid"] | None = None
     singletons: bool | None = None
     group_albums: bool | None = None
-    # Import files an album match has no track for (bonus tracks) with the album, instead of
-    # leaving them out as beets does. Applies to matches taken without asking; each answer can
-    # say otherwise.
-    keep_unmatched: bool | None = None
 
 
 @router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)
@@ -171,6 +167,7 @@ class Answer(BaseModel):
     ids: str = ""
     action: str | None = None
     resume: bool | None = None
+    # On apply: import files the release has no track for (bonus tracks) with the album.
     keep_unmatched: bool | None = None
 
 

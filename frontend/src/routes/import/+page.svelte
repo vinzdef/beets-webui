@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { imports, type AnswerBody, type ImportJob, type ImportMode, type Inbox } from '$lib/api';
+	import Info from '$lib/Info.svelte';
 	import MatchQuestion from '$lib/import/MatchQuestion.svelte';
+	import ModeSelect from '$lib/import/ModeSelect.svelte';
 	import OtherQuestion from '$lib/import/OtherQuestion.svelte';
 
 	let job = $state<ImportJob | null>(null);
@@ -13,7 +15,6 @@
 	let mode = $state<ImportMode>(loadMode());
 	let singletons = $state(false);
 	let groupAlbums = $state(false);
-	let keepUnmatched = $state(false);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
@@ -112,8 +113,7 @@
 		const options = {
 			mode,
 			...(singletons && { singletons: true }),
-			...(groupAlbums && { group_albums: true }),
-			...(keepUnmatched && { keep_unmatched: true })
+			...(groupAlbums && { group_albums: true })
 		};
 		run(() => imports.start(selected, options));
 	}
@@ -151,11 +151,7 @@
 
 	{#if job.question?.kind === 'match'}
 		{#key job.question.id}
-			<MatchQuestion
-				question={job.question}
-				keepUnmatched={!!job.options.keep_unmatched}
-				onanswer={answer}
-			/>
+			<MatchQuestion question={job.question} onanswer={answer} />
 		{/key}
 	{:else if job.question}
 		<OtherQuestion question={job.question} onanswer={answer} />
@@ -178,14 +174,41 @@
 				<code>webui: &#123;inboxes: &#123;Downloads: ~/Downloads&#125;&#125;</code>
 			</p>
 		{/if}
-		{#if allPaths.length}
-			<div class="select-bar">
-				<button class="link" onclick={toggleAll}>
-					{allSelected ? 'Clear selection' : 'Select all'}
-				</button>
-				<span class="meta">
-					{selected.length} of {allPaths.length} selected · Shift-click to select a range
-				</span>
+		{#if inboxes.length}
+			<div class="picker-header">
+				<div class="controls">
+					<div class="options">
+						<ModeSelect bind:value={mode} />
+						<label>
+							<input type="checkbox" bind:checked={groupAlbums} />
+							Split folders
+							<Info
+								text="Normally one folder is one album. This splits a folder that mixes several albums into one album per artist and album tag before matching."
+							/>
+						</label>
+						<label>
+							<input type="checkbox" bind:checked={singletons} />
+							As individual tracks
+							<Info
+								text="Match each file on its own against single recordings instead of treating each folder as an album. For loose songs that don't belong to an album."
+							/>
+						</label>
+						<button disabled={busy} onclick={loadInbox}>Refresh</button>
+					</div>
+					<button class="primary" disabled={busy || selected.length === 0} onclick={start}>
+						Import {selected.length || ''} selected
+					</button>
+				</div>
+				{#if allPaths.length}
+					<div class="select-bar">
+						<button class="link" onclick={toggleAll}>
+							{allSelected ? 'Clear selection' : 'Select all'}
+						</button>
+						<span class="meta">
+							{selected.length} of {allPaths.length} selected · Shift-click to select a range
+						</span>
+					</div>
+				{/if}
 			</div>
 		{/if}
 		{#each inboxes as inbox (inbox.name)}
@@ -211,66 +234,6 @@
 				</ul>
 			{/if}
 		{/each}
-
-		{#if inboxes.length}
-			<fieldset>
-				<legend>Mode</legend>
-				<label>
-					<input type="radio" value="auto" bind:group={mode} />
-					<span
-						><strong>Auto</strong> · matches above the strong-match threshold in your beets config are
-						applied automatically</span
-					>
-				</label>
-				<label>
-					<input type="radio" value="manual" bind:group={mode} />
-					<span><strong>Manual</strong> · approve every match that isn't 100%</span>
-				</label>
-				<label>
-					<input type="radio" value="timid" bind:group={mode} />
-					<span><strong>Timid</strong> · approve every match</span>
-				</label>
-			</fieldset>
-			<fieldset>
-				<label>
-					<input type="checkbox" bind:checked={singletons} />
-					<span>
-						<strong>Import as individual tracks</strong>
-						<small>
-							Match each file on its own against single recordings instead of treating each folder
-							as an album. For loose songs that don't belong to an album.
-						</small>
-					</span>
-				</label>
-				<label>
-					<input type="checkbox" bind:checked={groupAlbums} />
-					<span>
-						<strong>Split folders into albums by tags</strong>
-						<small>
-							Normally one folder is one album. This splits a folder that mixes several albums into
-							one album per artist and album tag before matching.
-						</small>
-					</span>
-				</label>
-				<label>
-					<input type="checkbox" bind:checked={keepUnmatched} />
-					<span>
-						<strong>Keep files the release doesn't have</strong>
-						<small>
-							beets imports only the files that match a track on the chosen release, so bonus tracks
-							are left behind. This imports them with the album, taking its album details. You can
-							still choose per album when you're asked.
-						</small>
-					</span>
-				</label>
-			</fieldset>
-			<div class="row">
-				<button class="primary" disabled={busy || selected.length === 0} onclick={start}>
-					Import {selected.length || ''} selected
-				</button>
-				<button disabled={busy} onclick={loadInbox}>Refresh</button>
-			</div>
-		{/if}
 	</section>
 {/if}
 
@@ -358,44 +321,53 @@
 		/* Shift-clicking would otherwise select the text between the clicks. */
 		user-select: none;
 	}
+	/* Stays in view while scrolling a long inbox. */
+	.picker-header {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: Canvas;
+		padding: 0.5rem 0;
+		border-bottom: 1px solid var(--line);
+	}
+	.controls {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	/* The options scroll sideways on narrow screens; Import stays put on the right. */
+	.options {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		overflow-x: auto;
+		white-space: nowrap;
+		scrollbar-width: thin;
+		padding: 0.15rem 0;
+	}
+	.options label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		cursor: pointer;
+	}
+	.controls > .primary {
+		flex: none;
+	}
 	.select-bar {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 0.25rem 1rem;
-		margin-top: 0.5rem;
+		margin-top: 0.4rem;
 	}
 	button.link {
 		background: none;
 		border: none;
 		padding: 0;
 		color: var(--accent);
-	}
-	fieldset label {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-	fieldset small {
-		display: block;
-		opacity: 0.65;
-	}
-	legend {
-		padding: 0;
-		margin-bottom: 0.35rem;
-		font-weight: 500;
-	}
-	fieldset {
-		border: none;
-		padding: 0;
-		margin: 1rem 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-	}
-	.row {
-		display: flex;
-		gap: 0.5rem;
 	}
 	.error {
 		color: var(--bad);
