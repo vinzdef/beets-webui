@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .art import find_art
 from .common import find_plugin, get_lib, paginate, serialize
 from .imports import require_same_origin
-from .maintenance import HEALTH_CHECKS, problems_of, scan_library
+from .maintenance import HEALTH_CHECKS, cached_scan, problems_of
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ def list_albums(
     if problem:
         if problem != "any" and problem not in HEALTH_CHECKS:
             raise HTTPException(400, f"no such health check: {problem}")
-        _, problems = scan_library(lib)
+        _, problems = cached_scan(lib)
         albums = [
             a
             for a in albums
@@ -230,6 +230,8 @@ def edit_items(request: Request, body: BulkEdit):
             key: tracks[0][key] for key in album_keys if len({repr(t[key]) for t in tracks}) == 1
         }
         if agreed:
+            # Synced like an album edit: moving the tracks above went by the album's old values,
+            # so this is what puts the files and the art where the new ones say.
             album.update(agreed)
-            album.store(inherit=False)
+            album.try_sync(ui.should_write(), ui.should_move(), inherit=True)
     return {"updated": len(items)}

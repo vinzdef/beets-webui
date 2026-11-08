@@ -108,3 +108,23 @@ def test_albums_filtered_by_problem(client, lib):
     assert problems["missing_tracks"]["detail"] == "Missing tracks 4, 5, going by the track totals."
     assert problems["missing_files"]["detail"].startswith("3 files gone: 01.flac, 02.flac")
     assert [a["id"] for a in problems["duplicates"]["others"]] == [other.id]
+
+
+def test_problem_scan_is_reused_until_the_library_changes(client, lib, monkeypatch):
+    from beetsplug.webui.routes import maintenance
+
+    scans = []
+    real = maintenance.scan_library
+    monkeypatch.setattr(maintenance, "scan_library", lambda lib: scans.append(1) or real(lib))
+    maintenance._forget_scan()
+
+    for _ in range(3):
+        client.get("/api/albums", params={"problem": "any"})
+    client.get("/api/library/health")
+    assert len(scans) == 1
+
+    album = lib.albums().get()
+    album.label = "Changed"
+    album.store()
+    client.get("/api/library/health")
+    assert len(scans) == 2

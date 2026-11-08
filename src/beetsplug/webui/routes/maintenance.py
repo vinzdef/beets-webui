@@ -2,11 +2,13 @@
 
 import os
 import threading
+import time
 from collections import defaultdict
 from typing import Any
 
 from beets import ui, util
 from beets.library import Album, Item, Library
+from beets.plugins import BeetsPlugin
 from beets.ui.commands.update import update_items
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -177,17 +179,56 @@ def scan_library(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
     return albums, problems
 
 
+# A scan stats every file and reads tags where there's no cover, and the problem filter pages
+# through it, so the last one is kept for a while. Any change to the database (an edit, an
+# import) drops it; changes made outside beets show within SCAN_TTL seconds.
+SCAN_TTL = 60
+_scan: tuple[float, Any, tuple[list[Album], dict[int, dict[str, str]]]] | None = None
+_scan_lock = threading.Lock()
+
+
+def cached_scan(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
+    global _scan
+    with _scan_lock:
+        if _scan is not None and _scan[1] == lib.path and time.monotonic() - _scan[0] < SCAN_TTL:
+            return _scan[2]
+    result = scan_library(lib)
+    with _scan_lock:
+        _scan = (time.monotonic(), lib.path, result)
+    return result
+
+
+def _forget_scan(**_: Any) -> None:
+    global _scan
+    _scan = None
+
+
+# Appended directly, like the import listeners: there's no plugin instance to register on.
+BeetsPlugin.listeners["database_change"].append(_forget_scan)
+
+
+def duplicates_for(lib: Library, album: Album) -> set[int]:
+    """The other albums duplicating one album, as duplicates_of judges, by a single query."""
+    with lib.transaction() as tx:
+        rows = tx.query(
+            "SELECT id FROM albums WHERE id != ? AND ((? != '' AND mb_albumid = ?)"
+            " OR (lower(albumartist) = lower(?) AND lower(album) = lower(?)))",
+            (album.id, album.mb_albumid, album.mb_albumid, album.albumartist, album.album),
+        )
+    return {row[0] for row in rows}
+
+
 def problems_of(lib: Library, album: Album) -> list[dict[str, Any]]:
     """One album's problems, for its page; duplicates name the other albums."""
-    duplicates = duplicates_of(list(lib.albums()))
-    found = album_problems(album, list(album.items()), duplicates)
+    others = duplicates_for(lib, album)
+    found = album_problems(album, list(album.items()), {album.id: others} if others else {})
     out = []
     for check, detail in found.items():
         problem: dict[str, Any] = {"id": check, "label": HEALTH_CHECKS[check][0], "detail": detail}
         if check == "duplicates":
             problem["others"] = [
                 {"id": a.id, "album": a.album, "albumartist": a.albumartist, "year": a.year}
-                for a in (lib.get_album(i) for i in sorted(duplicates[album.id]))
+                for a in (lib.get_album(i) for i in sorted(others))
                 if a is not None
             ]
         out.append(problem)
@@ -197,7 +238,7 @@ def problems_of(lib: Library, album: Album) -> list[dict[str, Any]]:
 @router.get("/library/health")
 def library_health(request: Request):
     """Which albums have problems, by check, and the share of albums that have none."""
-    albums, problems = scan_library(get_lib(request))
+    albums, problems = cached_scan(get_lib(request))
     return {
         "albums": len(albums),
         "healthy": len(albums) - len(problems),

@@ -46,6 +46,10 @@ class ImportHistory:
     def __init__(self, path: str):
         self.path = path
         self._lock = threading.Lock()
+        # Parsed entries, oldest first, and how far into the file they go: the file only grows,
+        # so each read parses just what was appended since.
+        self._entries: list[dict[str, Any]] = []
+        self._read_to = 0
 
     def append(self, entry: dict[str, Any]) -> None:
         line = json.dumps(entry, default=str)
@@ -60,17 +64,26 @@ class ImportHistory:
         """Entries newest first: the total, and those from `offset` on."""
         with self._lock:
             try:
-                with open(self.path, encoding="utf-8") as f:
-                    lines = f.readlines()
+                size = os.path.getsize(self.path)
             except FileNotFoundError:
-                return 0, []
-        entries = []
-        for line in reversed(lines):
-            try:
-                entries.append(json.loads(line))
-            except ValueError:
-                continue  # a line cut short by a crash
-        return len(entries), entries[offset : offset + limit]
+                size = 0
+            if size < self._read_to:  # replaced or emptied: start over
+                self._entries, self._read_to = [], 0
+            if size > self._read_to:
+                with open(self.path, "rb") as f:
+                    f.seek(self._read_to)
+                    chunk = f.read(size - self._read_to)
+                # Up to the last full line; one still being written is read next time.
+                end = chunk.rfind(b"\n") + 1
+                for line in chunk[:end].splitlines():
+                    try:
+                        self._entries.append(json.loads(line))
+                    except ValueError:
+                        continue  # a line cut short by a crash
+                self._read_to += end
+            total = len(self._entries)
+            newest_first = self._entries[max(total - offset - limit, 0) : max(total - offset, 0)]
+        return total, newest_first[::-1]
 
 
 class ImportBusyError(Exception):
@@ -193,6 +206,8 @@ class ImportJob:
 
         handler = _JobLogHandler(self)
         beets_log = logging.getLogger("beets")
+        session: WebImportSession | None = None
+        import_log: logging.Handler | None = None
         # Per-import options go into the global config; restore it afterwards.
         config["import"].flatten()
         saved_sources = list(config.sources)
@@ -203,7 +218,8 @@ class ImportJob:
                 overrides["import"]["library"] = True
             config.set(overrides)
             paths = None if self.query is not None else [p.encode() for p in self.paths]
-            session = WebImportSession(self, self._lib, _import_loghandler(), paths, self.query)
+            import_log = _import_loghandler()
+            session = WebImportSession(self, self._lib, import_log, paths, self.query)
             session.logger.addHandler(handler)
             beets_log.addHandler(handler)
             verb = "Re-importing" if self.query is not None else "Importing"
@@ -224,6 +240,13 @@ class ImportJob:
             status = "failed"
         finally:
             beets_log.removeHandler(handler)
+            if session is not None:
+                session.logger.removeHandler(handler)
+            # beets swaps the importer's handler on the next session without closing this one.
+            if import_log is not None:
+                if session is not None:
+                    session.logger.removeHandler(import_log)
+                import_log.close()
             config.sources[:] = saved_sources
             _running_job = None
 
@@ -287,12 +310,6 @@ class ImportManager:
         self.job.start()
         self._changed()
         return self.job
-
-    def wait_for_change(self, version: int, timeout: float) -> int:
-        """Block until the state is newer than `version` (or timeout); return the new version."""
-        with self._cond:
-            self._cond.wait_for(lambda: self.version != version, timeout)
-            return self.version
 
     def shutdown(self, timeout: float = 10) -> None:
         job = self.job
@@ -390,6 +407,8 @@ class WebImportSession(ImportSession):
                         serialize_candidate(i, m) for i, m in enumerate(task.candidates)
                     ],
                     "choices": [{"short": c.short, "long": c.long} for c in choices],
+                    # Whether track numbers restart on each disc, or count across the release.
+                    "per_disc_numbering": config["per_disc_numbering"].get(bool),
                 },
             )
 
@@ -509,26 +528,46 @@ def _keep_unmatched(task: ImportTask, match: AlbumMatch, tags: dict[str, dict[st
 
     beets imports only an album match's matched files. Every later stage asks the task for
     `imported_items()`, so the extra files join the album there; after the release's data is
-    applied they take its album fields (album, album artist, year, …) and keep their own titles
-    and track numbers, unless `tags` (by file path) gives them a title or track number.
+    applied they take its album fields (album, album artist, year, …) and keep their own title,
+    track and disc numbers, unless `tags` (by file path) gives them others.
     """
     extras = list(match.extra_items)
-    matched = match.items
-    task.imported_items = lambda: [*matched, *extras]
-    apply_metadata = task.apply_metadata
+    imported_items, apply_metadata, apply_upgrade = (
+        task.imported_items,
+        task.apply_metadata,
+        task.apply_upgrade,
+    )
+
+    def with_extras() -> list[Item]:
+        # beets' own list follows the match as it narrows (see below) and the choice made.
+        items = imported_items()
+        if task.choice_flag == Action.APPLY and task.match is match:
+            return [*items, *extras]
+        return items
+
+    def upgrade(kept: list[Item], superseded: list[Item], old_album_ids: list[int]) -> None:
+        # Upgrading a duplicate keeps only the files that improve on it: kept files too.
+        kept_ids = {id(i) for i in kept}
+        extras[:] = [i for i in extras if id(i) in kept_ids]
+        apply_upgrade(kept, superseded, old_album_ids)
 
     def apply_with_extras() -> None:
         apply_metadata()
-        source = matched[0]
+        if not match.items:
+            return
+        source = match.items[0]
         for item in extras:
             for key in Album.item_keys:
                 item[key] = source.get(key)
             given = tags.get(displayable_path(item.path), {})
             if given.get("title"):
                 item.title = given["title"]
-            if given.get("track") is not None:
-                item.track = given["track"]
+            for key in ("track", "disc"):
+                if given.get(key) is not None:
+                    item[key] = given[key]
 
+    task.imported_items = with_extras
+    task.apply_upgrade = upgrade
     task.apply_metadata = apply_with_extras
 
 

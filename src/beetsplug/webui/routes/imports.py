@@ -18,6 +18,9 @@ router = APIRouter()
 
 # How long an event stream waits for a change before sending a keep-alive comment.
 KEEPALIVE_SECONDS = 15
+# How often an event stream looks for a change. Blocking on the manager's condition instead
+# would hold a worker thread per open page, from the pool every sync endpoint shares.
+POLL_SECONDS = 0.25
 
 
 def require_same_origin(request: Request) -> None:
@@ -140,17 +143,17 @@ async def import_events(request: Request, manager: Manager):
     """Server-sent events: the current job's full state, each time it changes."""
 
     async def stream():
-        version = -1
+        version, quiet = -1, 0.0
         while not await request.is_disconnected():
-            new_version = await anyio.to_thread.run_sync(
-                manager.wait_for_change, version, KEEPALIVE_SECONDS
-            )
-            if new_version == version:
+            if manager.version != version:
+                version, quiet = manager.version, 0.0
+                snapshot = manager.job.snapshot() if manager.job else None
+                yield f"data: {json.dumps(snapshot)}\n\n"
+            elif quiet >= KEEPALIVE_SECONDS:
+                quiet = 0.0
                 yield ": keep-alive\n\n"
-                continue
-            version = new_version
-            snapshot = manager.job.snapshot() if manager.job else None
-            yield f"data: {json.dumps(snapshot)}\n\n"
+            await anyio.sleep(POLL_SECONDS)
+            quiet += POLL_SECONDS
 
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
@@ -160,6 +163,7 @@ async def import_events(request: Request, manager: Manager):
 class ExtraTags(BaseModel):
     title: str | None = Field(None, max_length=500)
     track: int | None = Field(None, ge=0, le=9999)
+    disc: int | None = Field(None, ge=0, le=999)
 
 
 class Answer(BaseModel):

@@ -24,7 +24,9 @@ locked = next(p["version"] for p in lock["package"] if p["name"] == "beets")
 
 errors = []
 series = ".".join(version.split(".")[:2])
-if f">={series}" not in requirement or not locked.startswith(f"{series}."):
+# ">=2.1" mustn't pass for "beets>=2.14": the series has to end where a number does.
+pinned = re.search(rf">={re.escape(series)}(?!\d)", requirement)
+if not pinned or not locked.startswith(f"{series}."):
     errors.append(
         f"version {version} must match beets {series}.x, but pyproject requires "
         f"{requirement!r} and uv.lock has beets {locked}"

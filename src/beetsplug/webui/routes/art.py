@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import mediafile
 from beets import logging, util
 from beets.library import Album, Item, Library
@@ -130,14 +131,24 @@ def fetch_album_art(request: Request, album_id: int):
 @router.put("/albums/{album_id}/art", dependencies=[Depends(require_same_origin)])
 async def upload_album_art(request: Request, album_id: int):
     """Replace the album's art file with the uploaded image (the request body)."""
-    album = get_album_or_404(request, album_id)
-    data = await request.body()
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "That image is too big (25 MB at most).")
-    ext = ART_TYPES.get(mediafile.image_mime_type(data) or "")
+    too_big = HTTPException(413, "That image is too big (25 MB at most).")
+    if int(request.headers.get("content-length") or 0) > MAX_UPLOAD:
+        raise too_big
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_UPLOAD:
+            raise too_big
+    ext = ART_TYPES.get(mediafile.image_mime_type(bytes(data)) or "")
     if ext is None:
         raise HTTPException(400, "Upload a JPEG, PNG or WebP image.")
-    set_art_from_bytes(album, data, ext)
+
+    # The database and the copy into the album's folder (maybe on a slow drive) block, so they
+    # run off the event loop, as sync endpoints do.
+    def save() -> None:
+        set_art_from_bytes(get_album_or_404(request, album_id), bytes(data), ext)
+
+    await anyio.to_thread.run_sync(save)
     return {"art_source": "file"}
 
 
@@ -304,9 +315,14 @@ def shrink_image(data: bytes, max_width: int, quality: int) -> bytes | None:
 
 def shrink_embedded_art(items: list[Item], max_width: int, quality: int) -> None:
     """Rewrite each track's embedded covers smaller, keeping its other images and those that
-    wouldn't get smaller. Tracks of an album usually share a cover, so each is shrunk once."""
+    wouldn't get smaller. Tracks of an album usually share a cover, so each is shrunk once per
+    album; only the current album's are kept, so memory doesn't grow with the library."""
     shrunk: dict[str, bytes | None] = {}
-    for item in items:
+    album_id: object = object()
+    for item in sorted(items, key=lambda i: (i.album_id is None, i.album_id or 0, i.id)):
+        if item.album_id is None or item.album_id != album_id:
+            shrunk.clear()
+            album_id = item.album_id
         try:
             tags = mediafile.MediaFile(util.syspath(item.path))
             images = tags.images or []

@@ -13,13 +13,16 @@ from beetsplug.webui.app import create_app
 
 # One frame of silent MPEG-1 Layer III (128 kbps, 44.1 kHz); enough for mediafile to tag.
 MP3_FRAME = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(413)
+# The same at 160 kbps, for a better copy of a track.
+MP3_FRAME_160 = bytes([0xFF, 0xFB, 0xA0, 0x64]) + bytes(518)
 
 
-def make_album(directory: Path, tracks: int = 2) -> Path:
+def make_album(directory: Path, tracks: int = 2, better: frozenset[int] = frozenset()) -> Path:
+    """An album of tagged silent MP3s; tracks numbered in `better` get a higher bitrate."""
     directory.mkdir(parents=True)
     for n in range(1, tracks + 1):
         path = directory / f"{n:02d}.mp3"
-        path.write_bytes(MP3_FRAME * 40)
+        path.write_bytes((MP3_FRAME_160 if n in better else MP3_FRAME) * 40)
         media = MediaFile(path)
         media.update(
             {"artist": "Tag Artist", "album": "Tag Album", "title": f"Tag Track {n}", "track": n}
@@ -450,6 +453,14 @@ def test_bulk_item_edit_reaches_album_when_all_tracks_agree(client, lib, album):
     assert lib.get_album(imported.id).genres == ["Jazz"]
     assert MediaFile(lib.get_item(second.id).path).genres == ["Jazz"]
 
+    # An album field that's in the path format moves the files once every track has it.
+    ids = [first.id, second.id]
+    client.patch("/api/items", json={"ids": ids, "fields": {"albumartist": "Someone Else"}})
+    for item_id in ids:
+        path = lib.get_item(item_id).path
+        assert b"/Someone Else/" in path and os.path.exists(path)
+    assert lib.get_album(imported.id).albumartist == "Someone Else"
+
 
 def test_bulk_album_edit(client, lib, album):
     imported = imported_album(client, lib, album)
@@ -487,9 +498,11 @@ def test_upload_embed_and_save_art(client, lib, album):
     assert client.get(f"/api/albums/{imported.id}").json()["art_source"] == "file"
 
 
-def test_art_rejects_non_images_and_needs_fetchart(client, lib, album):
+def test_art_rejects_non_images_and_needs_fetchart(client, lib, album, monkeypatch):
     imported = imported_album(client, lib, album)
     assert client.put(f"/api/albums/{imported.id}/art", content=b"not an image").status_code == 400
+    monkeypatch.setattr("beetsplug.webui.routes.art.MAX_UPLOAD", len(PNG) - 1)
+    assert client.put(f"/api/albums/{imported.id}/art", content=PNG).status_code == 413
     assert client.post(f"/api/albums/{imported.id}/art/embed").status_code == 400
     assert client.post(f"/api/albums/{imported.id}/art/fetch").status_code == 400
 
@@ -785,3 +798,50 @@ def test_move_featured_artists_with_approval(client, lib, album, config, monkeyp
     assert (done.artist, done.title) == ("Applied Artist", "Applied Track 1 feat. Guest")
     assert MediaFile(done.path).artist == "Applied Artist"
     assert untouched.artist == "Applied Artist feat. Guest"
+
+
+@pytest.mark.parametrize("matcher", [AutotagStub.MISSING], indirect=True)
+def test_upgrade_keeps_only_better_files_kept_files_too(client, lib, tmp_path, config):
+    config["import"]["duplicate_action"] = "ask"
+    # The release has one track: 01.mp3 matches it, 02.mp3 is a kept bonus file. The second
+    # copy has a better 01.mp3 and the same 02.mp3.
+    for name, better in (("First", frozenset()), ("Better", frozenset({1}))):
+        path = make_album(tmp_path / "inbox" / name, better=better)
+        client.post("/api/imports", json={"paths": [str(path)]}).raise_for_status()
+        q = question(client)
+        assert [os.path.basename(t["item"]["path"]) for t in q["candidates"][0]["tracks"]] == [
+            "01.mp3"
+        ]
+        answer(client, q, type="apply", candidate=0, keep_unmatched=True)
+        state = wait_for(
+            client,
+            lambda s: s["status"] == "done" or (s["question"] or {}).get("kind") == "duplicate",
+        )
+    assert len(lib.items()) == 2
+
+    answer(client, state["question"], type="duplicate", action="u")
+    assert finished(client)["status"] == "done"
+    # The better track replaced the old one; the bonus file, no better, wasn't added again.
+    assert sorted(i.bitrate for i in lib.items()) == [128000, 160000]
+
+
+def test_history_reads_only_what_was_appended(tmp_path):
+    from beetsplug.webui.imports import ImportHistory
+
+    path = tmp_path / "log.jsonl"
+    history = ImportHistory(str(path))
+    assert history.read(0, 10) == (0, [])
+    for n in range(3):
+        history.append({"n": n})
+    assert history.read(0, 2) == (3, [{"n": 2}, {"n": 1}])
+
+    # A line still being written waits until it's complete.
+    with open(path, "a") as f:
+        f.write('{"n": 3')
+    assert history.read(0, 10)[0] == 3
+    with open(path, "a") as f:
+        f.write("}\n")
+    assert history.read(1, 10) == (4, [{"n": 2}, {"n": 1}, {"n": 0}])
+
+    path.write_text('{"n": "new"}\n')  # replaced
+    assert history.read(0, 10) == (1, [{"n": "new"}])
