@@ -63,6 +63,13 @@ It's a self-contained test environment:
 - `music/`: the beets library folder. Imports *copy* from the inbox, so you can wipe `music/` and
   `config/library.db` and import the same files again.
 
+To get albums to test with, generate silent ones tagged from MusicBrainz (an exact match, a
+missing track, messy tags, an untagged album and loose tracks; about 55 MB):
+
+```sh
+uv run python scripts/make_test_albums.py examples/docker/inbox
+```
+
 Only the config and empty-folder placeholders are committed; everything else in those folders is
 gitignored. To import from the command line until the UI can do it:
 
