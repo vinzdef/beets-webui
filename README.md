@@ -115,6 +115,17 @@ services:
 Tags: `2.14.N` (one release), `2.14` (newest release for beets 2.14), `latest`, and `edge` (the
 current `main`). `docker inspect` shows the exact beets version in the `io.beets.version` label.
 
+### Installing as an app
+
+The web UI is a progressive web app: Chrome, Edge and Android offer to install it (the install
+icon in the address bar, or *Add to Home screen*), and Safari can *Add to Dock* or *Add to Home
+Screen*. It then opens in its own window with its own icon.
+
+Browsers only allow this on a secure origin: `http://localhost` / `http://127.0.0.1`, or HTTPS.
+To install it from another device, put it behind a reverse proxy with a certificate (Caddy,
+Traefik, `tailscale serve`, …). Plain `http://192.168.x.x:8338` works in the browser but can't
+be installed.
+
 ## Versioning
 
 Versions follow the beets release they work with: `<beets major>.<beets minor>.<release>`, so
@@ -178,8 +189,10 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 ## Roadmap
 
 - [x] Browse/search albums and items using beets query syntax
-- [ ] Edit metadata: `PATCH /api/items/{id}` and `/api/albums/{id}`, then `item.try_sync(write, move)`
-      to mirror `beet modify`, with bulk edits over a query
+- [x] Edit an album's metadata from its page, mirroring `beet modify` (`PATCH /api/albums/{id}`)
+- [ ] Bulk edits over a query, and singleton tracks
+- [x] Re-import an album already in the library to match it again (`beet import -L`)
+- [x] Installable as a PWA
 - [x] Imports from named inbox folders, with live progress
 - [x] Interactive matching with the CLI's choices: apply a candidate, skip, as-is, as tracks, group
       albums, rescan, search by name or ID, plugin choices, duplicates, resume; see

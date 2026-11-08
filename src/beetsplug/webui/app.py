@@ -1,3 +1,4 @@
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,6 +10,9 @@ from .imports import ImportManager
 from .routes import imports, library
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Older Pythons don't know this type, and browsers want it for the PWA manifest.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 def create_app(lib: Library) -> FastAPI:
