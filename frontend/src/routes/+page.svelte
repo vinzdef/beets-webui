@@ -5,6 +5,8 @@
 	let query = $state('');
 	let page = $state<Page<Album> | null>(null);
 	let error = $state<string | null>(null);
+	let updating = $state(false);
+	let updated = $state<string | null>(null);
 
 	async function search() {
 		error = null;
@@ -13,6 +15,27 @@
 		} catch (e) {
 			error = String(e);
 		}
+	}
+
+	async function update() {
+		updating = true;
+		updated = null;
+		try {
+			const { removed_items: items, removed_albums: albums } = await api.updateLibrary();
+			updated =
+				items || albums
+					? `Removed ${plural(items, 'track')} and ${plural(albums, 'album')} whose files are gone.`
+					: 'Library is up to date.';
+			await search();
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			updating = false;
+		}
+	}
+
+	function plural(n: number, word: string) {
+		return `${n} ${word}${n === 1 ? '' : 's'}`;
 	}
 
 	onMount(search);
@@ -26,7 +49,17 @@
 >
 	<input bind:value={query} placeholder="beets query, e.g. artist:radiohead year:1990..1999" />
 	<button>Search</button>
+	<button
+		type="button"
+		disabled={updating}
+		onclick={update}
+		title="Remove entries whose files are gone and re-read changed tags, like `beet update`"
+	>
+		{updating ? 'Updating…' : 'Update library'}
+	</button>
 </form>
+
+{#if updated}<p class="meta">{updated}</p>{/if}
 
 {#if error}
 	<p class="error">{error}</p>

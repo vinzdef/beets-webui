@@ -36,8 +36,15 @@ export const api = {
 	albums: (q = '', offset = 0, limit = 100) => get<Page<Album>>('/albums', { q, offset, limit }),
 	album: (id: number) => get<Album & { items: Item[] }>(`/albums/${id}`),
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
-	artUrl: (id: number) => `/api/albums/${id}/art`
+	artUrl: (id: number) => `/api/albums/${id}/art`,
+	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
+	updateLibrary: () => post<LibraryUpdate>('/library/update')
 };
+
+export interface LibraryUpdate {
+	removed_items: number;
+	removed_albums: number;
+}
 
 // Imports
 

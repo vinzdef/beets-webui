@@ -30,3 +30,17 @@ def test_pagination(client):
 def test_missing_album(client):
     assert client.get("/api/albums/999").status_code == 404
     assert client.get("/api/albums/999/art").status_code == 404
+
+
+def test_update_removes_missing_files(client, lib, tmp_path):
+    lib.directory = str(tmp_path).encode()
+    # None of the fixture's files exist on disk.
+    body = client.post("/api/library/update").json()
+    assert body == {"removed_items": 4, "removed_albums": 1}
+    assert client.get("/api/items").json()["total"] == 0
+
+
+def test_update_refuses_without_library_folder(client, lib, tmp_path):
+    lib.directory = str(tmp_path / "unmounted").encode()
+    assert client.post("/api/library/update").status_code == 409
+    assert client.get("/api/items").json()["total"] == 4
