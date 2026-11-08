@@ -365,10 +365,11 @@ class WebImportSession(ImportSession):
             PromptChoice("u", "Use as-is", lambda s, t: Action.ASIS),
         ]
         if task.is_album:
-            choices += [
-                PromptChoice("t", "as Tracks", lambda s, t: Action.TRACKS),
-                PromptChoice("g", "Group albums", lambda s, t: Action.ALBUMS),
-            ]
+            choices.append(PromptChoice("t", "as Tracks", lambda s, t: Action.TRACKS))
+            # Grouping only does something when the files span several albums; otherwise it
+            # would just ask about the same album again. (The terminal prompt always offers it.)
+            if len({_album_key(i) for i in task.items}) > 1:
+                choices.append(PromptChoice("g", "Group albums", lambda s, t: Action.ALBUMS))
             if task.toppath and not task.is_grouped:
                 choices.append(PromptChoice("r", "Rescan directory", lambda s, t: Action.RESCAN))
         choices.append(PromptChoice("b", "aBort", _abort))
@@ -491,6 +492,11 @@ def _strength(distance: float) -> str:
 def _tag(task: ImportTask, artist: str | None = None, name: str | None = None, **kwargs):
     method = tag_item if isinstance(task, SingletonImportTask) else tag_album
     return method(task.source, artist, name, **kwargs)
+
+
+def _album_key(item: Item) -> tuple[str, str]:
+    """The key beets' group_albums stage groups files by."""
+    return (item.albumartist or item.artist, item.album)
 
 
 def _abort(session: ImportSession, task: ImportTask) -> None:

@@ -149,7 +149,8 @@ def test_apply_candidate(client, lib, album):
     first = q["candidates"][0]
     assert first["name"] == "Applied Album"
     assert [t["track"]["title"] for t in first["tracks"]] == ["Applied Track 1", "Applied Track 2"]
-    assert {"s", "u", "t", "g", "b"} <= {c["short"] for c in q["choices"]}
+    assert {"s", "u", "t", "b"} <= {c["short"] for c in q["choices"]}
+    assert "g" not in {c["short"] for c in q["choices"]}  # all files are from one album
 
     answer(client, q, type="apply", candidate=0)
     state = finished(client)
@@ -157,6 +158,29 @@ def test_apply_candidate(client, lib, album):
     assert state["status"] == "done", state
     assert [a.album for a in lib.albums()] == ["Applied Album"]
     assert any(e["kind"] == "imported" for e in state["log"])
+
+
+def test_group_albums_offered_for_mixed_folders(client, lib, tmp_path):
+    folder = make_album(tmp_path / "inbox" / "Mixed")
+    media = MediaFile(folder / "02.mp3")
+    media.album = "Other Album"
+    media.save()
+
+    client.post("/api/imports", json={"paths": [str(folder)]}).raise_for_status()
+    q = question(client)
+    assert "g" in {c["short"] for c in q["choices"]}
+
+    answer(client, q, type="choice", short="g")
+    first = wait_for(client, lambda s: s["question"] and s["question"]["id"] != q["id"])
+    names = {first["question"]["task"]["name"]}
+    answer(client, first["question"], type="choice", short="s")
+    second = wait_for(
+        client, lambda s: s["question"] and s["question"]["id"] != first["question"]["id"]
+    )
+    names.add(second["question"]["task"]["name"])
+    assert names == {"Tag Album", "Other Album"}  # one question per album tag
+    assert len(second["question"]["task"]["items"]) == 1
+    client.post("/api/imports/current/abort").raise_for_status()
 
 
 def test_skip(client, lib, album):
