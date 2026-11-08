@@ -71,6 +71,15 @@
 	function trackNumber(track: ImportTrack) {
 		return track.medium_index ?? track.index;
 	}
+
+	/**
+	 * Whether a file's track number disagrees with the release, by beets' rule: numbering per disc
+	 * or across the whole release both count as matching, and files without a number are ignored.
+	 */
+	function numberDiffers(item: ImportItem | null, track: ImportTrack) {
+		if (!item?.track || !track.index) return false;
+		return item.track !== track.medium_index && item.track !== track.index;
+	}
 </script>
 
 <section class="question">
@@ -157,9 +166,9 @@
 										{#if track}
 											<td
 												class="num"
-												class:warn={item?.track != null && item.track !== trackNumber(track)}
-												title={item?.track != null && item.track !== trackNumber(track)
-													? `Your file says track ${item.track}`
+												class:warn={numberDiffers(item, track)}
+												title={numberDiffers(item, track)
+													? `Your file says track ${item?.track}`
 													: undefined}
 											>
 												{trackNumber(track)}
