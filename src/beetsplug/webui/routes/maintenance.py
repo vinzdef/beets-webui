@@ -14,12 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .art import embedded_art, folder_image, stored_art
-from .common import find_plugin, get_lib
+from .common import find_plugin, get_lib, update_lock
 from .imports import require_same_origin
 
 router = APIRouter()
-
-_update_lock = threading.Lock()
 
 
 def check_can_update(request: Request) -> Library:
@@ -61,7 +59,7 @@ def preview_library_update(request: Request):
 def update_library(request: Request):
     """Like `beet update`: drop entries whose files are gone and re-read tags that changed."""
     lib = check_can_update(request)
-    if not _update_lock.acquire(blocking=False):
+    if not update_lock.acquire(blocking=False):
         raise HTTPException(409, "The library is already being updated.")
     try:
         items = list(lib.items())
@@ -73,7 +71,7 @@ def update_library(request: Request):
             "removed_albums": albums - len(lib.albums()),
         }
     finally:
-        _update_lock.release()
+        update_lock.release()
 
 
 # Each health check: what it's called, and what it means for an album.
@@ -92,18 +90,28 @@ HEALTH_CHECKS = {
 }
 
 
-def missing_track_numbers(items: list[Item]) -> dict[int, list[int]]:
-    """Per disc with fewer tracks than its track total, the numbers no track has (possibly none,
-    when tracks share a number). Discs without a total are skipped."""
+def missing_track_numbers(items: list[Item]) -> dict[int | None, list[int]]:
+    """The track numbers below the track total that no track has (possibly none, when tracks
+    share a number), where there are fewer tracks than the total. Untotalled tracks are skipped.
+
+    beets numbers tracks across the release by default, with the release's track count as each
+    track's total; with per_disc_numbering, per disc with each disc's count. The tags tell which:
+    numbered across the release, each disc's total is at least the album's track count. Keyed by
+    disc when numbered per disc, else by None.
+    """
     discs: dict[int, list[Item]] = defaultdict(list)
     for item in items:
         discs[item.disc or 1].append(item)
-    missing = {}
-    for disc, tracks in sorted(discs.items()):
-        total = max(t.tracktotal or 0 for t in tracks)
+    totals = {disc: max(t.tracktotal or 0 for t in tracks) for disc, tracks in discs.items()}
+    if len(discs) > 1 and all(total >= len(items) for total in totals.values()):
+        groups: dict[int | None, tuple[list[Item], int]] = {None: (items, max(totals.values()))}
+    else:
+        groups = {disc: (tracks, totals[disc]) for disc, tracks in sorted(discs.items())}
+    missing: dict[int | None, list[int]] = {}
+    for key, (tracks, total) in groups.items():
         if 0 < len(tracks) < total:
             have = {t.track for t in tracks}
-            missing[disc] = [n for n in range(1, total + 1) if n not in have]
+            missing[key] = [n for n in range(1, total + 1) if n not in have]
     return missing
 
 
@@ -154,7 +162,7 @@ def album_problems(
                 if numbers
                 else "tracks (some share a number)"
             )
-            parts.append(f"{what} of disc {disc}" if several_discs else what)
+            parts.append(f"{what} of disc {disc}" if several_discs and disc else what)
         problems["missing_tracks"] = f"Missing {'; '.join(parts)}, going by the track totals."
     if not has_art(album, items):
         problems["no_art"] = "No cover file, cover image in the folder or embedded art."
@@ -185,6 +193,8 @@ def scan_library(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
 SCAN_TTL = 60
 _scan: tuple[float, Any, tuple[list[Album], dict[int, dict[str, str]]]] | None = None
 _scan_lock = threading.Lock()
+# Counts database changes, so a scan that a change overtook isn't kept.
+_changes = 0
 
 
 def cached_scan(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
@@ -192,15 +202,19 @@ def cached_scan(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
     with _scan_lock:
         if _scan is not None and _scan[1] == lib.path and time.monotonic() - _scan[0] < SCAN_TTL:
             return _scan[2]
+        started_at = _changes
     result = scan_library(lib)
     with _scan_lock:
-        _scan = (time.monotonic(), lib.path, result)
+        if _changes == started_at:
+            _scan = (time.monotonic(), lib.path, result)
     return result
 
 
 def _forget_scan(**_: Any) -> None:
-    global _scan
-    _scan = None
+    global _scan, _changes
+    with _scan_lock:
+        _scan = None
+        _changes += 1
 
 
 # Appended directly, like the import listeners: there's no plugin instance to register on.
@@ -208,14 +222,19 @@ BeetsPlugin.listeners["database_change"].append(_forget_scan)
 
 
 def duplicates_for(lib: Library, album: Album) -> set[int]:
-    """The other albums duplicating one album, as duplicates_of judges, by a single query."""
+    """The other albums duplicating one album, judged as duplicates_of does. Reads just the
+    compared columns; names are compared in Python, since SQLite's lower() is ASCII only."""
     with lib.transaction() as tx:
         rows = tx.query(
-            "SELECT id FROM albums WHERE id != ? AND ((? != '' AND mb_albumid = ?)"
-            " OR (lower(albumartist) = lower(?) AND lower(album) = lower(?)))",
-            (album.id, album.mb_albumid, album.mb_albumid, album.albumartist, album.album),
+            "SELECT id, mb_albumid, albumartist, album FROM albums WHERE id != ?", (album.id,)
         )
-    return {row[0] for row in rows}
+    name = ((album.albumartist or "").lower(), (album.album or "").lower())
+    return {
+        row[0]
+        for row in rows
+        if (album.mb_albumid and row[1] == album.mb_albumid)
+        or ((row[2] or "").lower(), (row[3] or "").lower()) == name
+    }
 
 
 def problems_of(lib: Library, album: Album) -> list[dict[str, Any]]:

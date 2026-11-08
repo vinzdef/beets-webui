@@ -37,15 +37,6 @@
 	let searchName = $state('');
 	let searchIds = $state('');
 
-	// A new question (e.g. after a search) starts from its best candidate again. The page gets a
-	// fresh copy of the same question whenever the import logs something, so compare ids.
-	let selectedFor = -1;
-	$effect(() => {
-		if (question.id === selectedFor) return;
-		selectedFor = question.id;
-		selected = 0;
-	});
-
 	const task = $derived(question.task);
 	const candidate = $derived<Candidate | undefined>(question.candidates[selected]);
 	const isAlbum = $derived(task.kind === 'album');
@@ -77,13 +68,13 @@
 	// or track means the default: the last disc, after its last track.
 	let extraTags = $state<Record<string, { title: string; disc: string; track: string }>>({});
 
-	// Each candidate starts from beets' own pairing and the files' own tags; fresh copies of the
-	// same question (see above) keep what you've changed.
-	let pairedFor = '';
+	// Each candidate starts from beets' own pairing and the files' own tags. A new question
+	// mounts this component afresh (the page keys it by id); the page also gets a fresh copy of
+	// the same question whenever the import logs something, which mustn't undo your changes.
+	let pairedFor = -1;
 	$effect(() => {
-		const key = `${question.id}:${selected}`;
-		if (key === pairedFor) return;
-		pairedFor = key;
+		if (selected === pairedFor) return;
+		pairedFor = selected;
 		pairing = { ...ownPairing };
 		extraTags = Object.fromEntries(
 			files.map((f) => [f.path, { title: f.title ?? '', disc: '', track: '' }])
@@ -310,7 +301,10 @@
 		>
 			<input bind:value={searchArtist} placeholder="Artist" />
 			<input bind:value={searchName} placeholder={isAlbum ? 'Album' : 'Title'} />
-			<button>Search</button>
+			<button
+				disabled={!searchArtist.trim() || !searchName.trim()}
+				title="beets searches only with both an artist and a name">Search</button
+			>
 		</form>
 		<form
 			onsubmit={(e) => {

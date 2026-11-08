@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..imports import ImportBusyError, ImportManager
+from .common import update_lock
 
 router = APIRouter()
 
@@ -114,6 +115,8 @@ def start_import(body: StartImport, manager: Manager):
         paths = [str(resolve_in_inbox(p)) for p in body.paths]
     else:
         raise HTTPException(400, "no paths given")
+    if update_lock.locked():
+        raise HTTPException(409, "Wait for the library update to finish before importing.")
     options = body.model_dump(exclude={"paths", "album_id", "item_id"}, exclude_none=True)
     try:
         job = manager.start(paths, options, query)
@@ -257,8 +260,9 @@ def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
                 raise HTTPException(400, "invalid choice")
             return {"type": "choice", "short": body.short}
         if body.type == "search":
-            if not (body.artist.strip() or body.name.strip()):
-                raise HTTPException(400, "enter an artist or a name to search for")
+            # beets ignores a search unless it has both, and looks up the files' own tags again.
+            if not (body.artist.strip() and body.name.strip()):
+                raise HTTPException(400, "enter both an artist and a name to search for")
             return {"type": "search", "artist": body.artist, "name": body.name}
         if body.type == "id":
             if not body.ids.strip():

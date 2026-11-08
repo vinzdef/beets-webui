@@ -503,6 +503,10 @@ def test_art_rejects_non_images_and_needs_fetchart(client, lib, album, monkeypat
     assert client.put(f"/api/albums/{imported.id}/art", content=b"not an image").status_code == 400
     monkeypatch.setattr("beetsplug.webui.routes.art.MAX_UPLOAD", len(PNG) - 1)
     assert client.put(f"/api/albums/{imported.id}/art", content=PNG).status_code == 413
+    res = client.put(
+        f"/api/albums/{imported.id}/art", content=PNG, headers={"content-length": "12, 12"}
+    )
+    assert res.status_code in (400, 413)
     assert client.post(f"/api/albums/{imported.id}/art/embed").status_code == 400
     assert client.post(f"/api/albums/{imported.id}/art/fetch").status_code == 400
 
@@ -845,3 +849,25 @@ def test_history_reads_only_what_was_appended(tmp_path):
 
     path.write_text('{"n": "new"}\n')  # replaced
     assert history.read(0, 10) == (1, [{"n": "new"}])
+
+
+def test_search_needs_both_artist_and_name(client, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    res = client.post(
+        "/api/imports/current/answer",
+        json={"question": q["id"], "type": "search", "artist": "Radiohead", "name": ""},
+    )
+    assert res.status_code == 400
+
+
+@pytest.mark.parametrize("matcher", [AutotagStub.MISSING], indirect=True)
+def test_kept_files_count_in_track_totals(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    extra = q["candidates"][0]["extra_items"][0]["path"]
+    tags = {extra: {"title": "Bonus", "track": 2, "disc": 1}}
+    answer(client, q, type="apply", candidate=0, keep_unmatched=True, extra_tags=tags)
+    assert finished(client)["status"] == "done"
+    assert sorted((i.track, i.tracktotal) for i in lib.items()) == [(0, 2), (2, 2)]
+    assert {MediaFile(i.path).tracktotal for i in lib.items()} == {2}

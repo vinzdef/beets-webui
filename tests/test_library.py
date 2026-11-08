@@ -128,3 +128,82 @@ def test_problem_scan_is_reused_until_the_library_changes(client, lib, monkeypat
     album.store()
     client.get("/api/library/health")
     assert len(scans) == 2
+
+
+def two_disc_album(lib, numbering, drop=()):
+    """A 2x3 album numbered across the release (1-6, total 6) or per disc (1-3, total 3)."""
+    items = []
+    for disc in (1, 2):
+        for n in (1, 2, 3):
+            across = (disc - 1) * 3 + n
+            if across in drop:
+                continue
+            track, total = (across, 6) if numbering == "across" else (n, 3)
+            items.append(
+                Item(
+                    title=f"T{across}",
+                    album="Double",
+                    albumartist="X",
+                    disc=disc,
+                    track=track,
+                    tracktotal=total,
+                    path=f"/x/{across}.flac".encode(),
+                )
+            )
+    return lib.add_album(items)
+
+
+def missing_detail(client, album):
+    problems = {p["id"]: p for p in client.get(f"/api/albums/{album.id}").json()["problems"]}
+    return problems.get("missing_tracks", {}).get("detail")
+
+
+def test_complete_two_disc_albums_miss_nothing(client, lib):
+    for numbering in ("across", "per disc"):
+        assert missing_detail(client, two_disc_album(lib, numbering)) is None
+
+
+def test_two_disc_albums_name_what_is_missing(client, lib):
+    across = two_disc_album(lib, "across", drop={5})
+    assert missing_detail(client, across) == "Missing track 5, going by the track totals."
+    per_disc = two_disc_album(lib, "per disc", drop={5})
+    assert missing_detail(client, per_disc) == (
+        "Missing track 2 of disc 2, going by the track totals."
+    )
+
+
+def test_a_scan_overtaken_by_a_change_is_not_kept(client, lib, monkeypatch):
+    from beetsplug.webui.routes import maintenance
+
+    maintenance._forget_scan()
+    real = maintenance.scan_library
+    scans = []
+
+    def scan_while_editing(lib):
+        scans.append(1)
+        result = real(lib)
+        if len(scans) == 1:
+            album = lib.albums().get()
+            album.label = "Changed mid-scan"
+            album.store()
+        return result
+
+    monkeypatch.setattr(maintenance, "scan_library", scan_while_editing)
+    client.get("/api/library/health")
+    client.get("/api/library/health")
+    assert len(scans) == 2  # the first result was stale, so it wasn't reused
+
+
+def test_album_page_sees_duplicates_beyond_ascii(client, lib):
+    first = lib.add_album([Item(title="a", albumartist="Björk", album="Homogenic", path=b"/b1")])
+    second = lib.add_album([Item(title="a", albumartist="BJÖRK", album="Homogenic", path=b"/b2")])
+    problems = {p["id"]: p for p in client.get(f"/api/albums/{first.id}").json()["problems"]}
+    assert [a["id"] for a in problems["duplicates"]["others"]] == [second.id]
+
+
+def test_imports_wait_for_a_library_update(client):
+    from beetsplug.webui.routes.common import update_lock
+
+    with update_lock:
+        res = client.post("/api/imports", json={"album_id": 1})
+    assert res.status_code == 409

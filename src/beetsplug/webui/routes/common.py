@@ -1,5 +1,6 @@
 """Helpers shared by the library routes."""
 
+import threading
 from itertools import islice
 from typing import Any
 
@@ -10,6 +11,9 @@ from beets.plugins import BeetsPlugin
 from fastapi import Request
 
 PATH_FIELDS = {"path", "artpath"}
+
+# Held while `beet update` runs, which removes entries and moves files: imports wait for it.
+update_lock = threading.Lock()
 
 
 def get_lib(request: Request) -> Library:

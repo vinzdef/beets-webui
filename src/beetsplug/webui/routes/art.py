@@ -132,7 +132,11 @@ def fetch_album_art(request: Request, album_id: int):
 async def upload_album_art(request: Request, album_id: int):
     """Replace the album's art file with the uploaded image (the request body)."""
     too_big = HTTPException(413, "That image is too big (25 MB at most).")
-    if int(request.headers.get("content-length") or 0) > MAX_UPLOAD:
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        raise HTTPException(400, "Bad Content-Length header.") from None
+    if declared > MAX_UPLOAD:
         raise too_big
     data = bytearray()
     async for chunk in request.stream():

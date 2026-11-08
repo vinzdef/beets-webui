@@ -14,6 +14,7 @@ import os
 import threading
 import time
 import uuid
+from array import array
 from collections.abc import Callable
 from typing import Any
 
@@ -46,9 +47,10 @@ class ImportHistory:
     def __init__(self, path: str):
         self.path = path
         self._lock = threading.Lock()
-        # Parsed entries, oldest first, and how far into the file they go: the file only grows,
-        # so each read parses just what was appended since.
-        self._entries: list[dict[str, Any]] = []
+        # Where each entry's line starts, oldest first, and how far into the file they go: the
+        # file only grows, so each read indexes just what was appended since, and only the
+        # entries asked for are parsed. Offsets, not entries, so memory stays small.
+        self._offsets = array("q")
         self._read_to = 0
 
     def append(self, entry: dict[str, Any]) -> None:
@@ -68,22 +70,31 @@ class ImportHistory:
             except FileNotFoundError:
                 size = 0
             if size < self._read_to:  # replaced or emptied: start over
-                self._entries, self._read_to = [], 0
+                self._offsets, self._read_to = array("q"), 0
             if size > self._read_to:
                 with open(self.path, "rb") as f:
                     f.seek(self._read_to)
-                    chunk = f.read(size - self._read_to)
-                # Up to the last full line; one still being written is read next time.
-                end = chunk.rfind(b"\n") + 1
-                for line in chunk[:end].splitlines():
-                    try:
-                        self._entries.append(json.loads(line))
-                    except ValueError:
-                        continue  # a line cut short by a crash
-                self._read_to += end
-            total = len(self._entries)
-            newest_first = self._entries[max(total - offset - limit, 0) : max(total - offset, 0)]
-        return total, newest_first[::-1]
+                    position = self._read_to
+                    # Full lines only; one still being written is indexed next time.
+                    for line in f:
+                        if not line.endswith(b"\n"):
+                            break
+                        if line.strip().startswith(b"{"):  # skip blank or cut-short lines
+                            self._offsets.append(position)
+                        position += len(line)
+                    self._read_to = position
+            total = len(self._offsets)
+            wanted = self._offsets[max(total - offset - limit, 0) : max(total - offset, 0)]
+            entries = []
+            if wanted:
+                with open(self.path, "rb") as f:
+                    for start in reversed(wanted):
+                        f.seek(start)
+                        try:
+                            entries.append(json.loads(f.readline()))
+                        except ValueError:
+                            continue  # a line cut short by a crash
+        return total, entries
 
 
 class ImportBusyError(Exception):
@@ -565,6 +576,15 @@ def _keep_unmatched(task: ImportTask, match: AlbumMatch, tags: dict[str, dict[st
             for key in ("track", "disc"):
                 if given.get(key) is not None:
                     item[key] = given[key]
+        # Track totals count the kept files too, as beets counts: per disc with
+        # per_disc_numbering, else across the release.
+        everything = [*match.items, *extras]
+        per_disc = config["per_disc_numbering"].get(bool)
+        for disc in {i.disc for i in everything} if per_disc else {None}:
+            group = [i for i in everything if disc is None or i.disc == disc]
+            total = max(max(i.tracktotal or 0 for i in group), max(i.track or 0 for i in group))
+            for item in group:
+                item.tracktotal = total
 
     task.imported_items = with_extras
     task.apply_upgrade = upgrade

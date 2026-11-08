@@ -97,6 +97,8 @@
 	}
 
 	async function search() {
+		// A new search supersedes a Show more in flight (see loadMore).
+		loadingMore = false;
 		const current = ++generation;
 		selected = [];
 		error = null;
@@ -125,6 +127,8 @@
 		capture: () => $state.snapshot({ query, grouping, problem, page, songs }),
 		restore: (saved) => {
 			generation++;
+			loadingMore = false;
+			loadingMore = false;
 			({ query, grouping, page, songs } = saved);
 			problem = saved.problem ?? '';
 		}
@@ -156,7 +160,8 @@
 		} catch (e) {
 			if (current === generation) error = e instanceof Error ? e.message : String(e);
 		} finally {
-			loadingMore = false;
+			// A stale request mustn't re-enable Show more while a newer one is loading.
+			if (current === generation) loadingMore = false;
 		}
 	}
 
