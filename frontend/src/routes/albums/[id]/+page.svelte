@@ -175,42 +175,43 @@
 						>Re-import…</button
 					>
 				</div>
-				<div class="buttons art">
+			{/if}
+			<!-- Cover changes save straight away, so they work while editing the fields too. -->
+			<div class="buttons art">
+				<button
+					disabled={busy}
+					title="Look for a cover with the fetchart plugin's sources, replacing the current one"
+					onclick={() => artAction(() => api.fetchArt(album!.id), 'Fetched a new cover.')}
+					>Fetch cover</button
+				>
+				<button disabled={busy} onclick={() => fileInput?.click()}>Upload cover…</button>
+				<input
+					bind:this={fileInput}
+					type="file"
+					accept="image/jpeg,image/png,image/webp"
+					hidden
+					onchange={upload}
+				/>
+				{#if album.art_source === 'folder' || album.art_source === 'embedded'}
 					<button
 						disabled={busy}
-						title="Look for a cover with the fetchart plugin's sources, replacing the current one"
-						onclick={() => artAction(() => api.fetchArt(album!.id), 'Fetched a new cover.')}
-						>Fetch cover</button
+						title="Make it beets' art file for this album, so beets and other players use it"
+						onclick={() =>
+							artAction(() => api.saveArt(album!.id), 'Saved the cover as an art file.')}
+						>Save as art file</button
 					>
-					<button disabled={busy} onclick={() => fileInput?.click()}>Upload cover…</button>
-					<input
-						bind:this={fileInput}
-						type="file"
-						accept="image/jpeg,image/png,image/webp"
-						hidden
-						onchange={upload}
-					/>
-					{#if album.art_source === 'folder' || album.art_source === 'embedded'}
-						<button
-							disabled={busy}
-							title="Make it beets' art file for this album, so beets and other players use it"
-							onclick={() =>
-								artAction(() => api.saveArt(album!.id), 'Saved the cover as an art file.')}
-							>Save as art file</button
-						>
-					{/if}
-					{#if album.art_source === 'file'}
-						<button
-							disabled={busy}
-							title="Write the cover into every track's tags, for players that only read embedded art"
-							onclick={() =>
-								artAction(() => api.embedArt(album!.id), 'Embedded the cover in every track.')}
-							>Embed in files</button
-						>
-					{/if}
-				</div>
-				<p class="meta">{album.art_source ? artSources[album.art_source] : 'No cover yet.'}</p>
-			{/if}
+				{/if}
+				{#if album.art_source === 'file'}
+					<button
+						disabled={busy}
+						title="Write the cover into every track's tags, for players that only read embedded art"
+						onclick={() =>
+							artAction(() => api.embedArt(album!.id), 'Embedded the cover in every track.')}
+						>Embed in files</button
+					>
+				{/if}
+			</div>
+			<p class="meta">{album.art_source ? artSources[album.art_source] : 'No cover yet.'}</p>
 		</div>
 	</header>
 
