@@ -85,6 +85,33 @@ paths for `directory` and `library` (`/music`, `/config/library.db`).
 
 The port is published on the host's loopback only, because there's no authentication yet.
 
+### Published image
+
+```yaml
+services:
+  beets-webui:
+    image: ghcr.io/vinzdef/beets-webui:2.14   # newest release for beets 2.14
+```
+
+Tags: `2.14.N` (one release), `2.14` (newest release for beets 2.14), `latest`, and `edge` (the
+current `main`). `docker inspect` shows the exact beets version in the `io.beets.version` label.
+
+## Versioning
+
+Versions follow the beets release they work with: `<beets major>.<beets minor>.<release>`, so
+every `2.14.N` works with beets 2.14, and support for beets 2.15 starts at `2.15.0`. The beets
+requirement in `pyproject.toml` is pinned to match.
+
+To release, bump `version` in `pyproject.toml`, commit, and push a matching tag:
+
+```sh
+git tag v2.14.1 && git push origin v2.14.1
+```
+
+The Docker workflow refuses to publish if the tag, the version and the beets version disagree
+(`scripts/check_version.py`), installs the beets version locked in `uv.lock`, and publishes
+`ghcr.io/vinzdef/beets-webui` for amd64 and arm64.
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/) and [pnpm](https://pnpm.io/).
