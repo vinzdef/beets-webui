@@ -207,3 +207,17 @@ def test_imports_wait_for_a_library_update(client):
     with update_lock:
         res = client.post("/api/imports", json={"album_id": 1})
     assert res.status_code == 409
+
+
+def test_album_tracks_come_in_album_order(client, lib):
+    items = [
+        Item(title=title, artist=artist, album="Wait for Me", track=n, path=f"/m/{n}.flac".encode())
+        for n, title, artist in [
+            (1, "On Air", "Moby"),
+            (2, "Feelings Come Undone", "Moby feat. Raquel Rodriguez"),
+            (3, "Medusa", "Moby"),
+        ]
+    ]
+    album = lib.add_album(items)
+    tracks = client.get(f"/api/albums/{album.id}").json()["items"]
+    assert [t["track"] for t in tracks] == [1, 2, 3]

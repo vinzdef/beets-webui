@@ -58,7 +58,10 @@ def get_album(request: Request, album_id: int):
     if album is None:
         raise HTTPException(404, "album not found")
     data = serialize(album)
-    data["items"] = [serialize(i) for i in album.items()]
+    # In album order: beets' default item sort starts with the artist, which puts a track by
+    # "Artist feat. Guest" after all of the artist's own.
+    tracks = sorted(album.items(), key=lambda i: (i.disc or 0, i.track or 0, i.title))
+    data["items"] = [serialize(i) for i in tracks]
     found = find_art(album)
     data["art_source"] = found[0] if found else None
     data["can_refresh"] = bool(album.mb_albumid) and find_plugin("mbsync") is not None
