@@ -73,7 +73,8 @@
 			: {}
 	);
 	let pairing = $state<Record<string, number | null>>({});
-	// Title and track number for files the release doesn't have, as typed.
+	// Title and track number for files the release doesn't have, as chosen; an empty track
+	// means the default, after the release's last track.
 	let extraTags = $state<Record<string, { title: string; track: string }>>({});
 
 	// Each candidate starts from beets' own pairing and the files' own tags; fresh copies of the
@@ -84,9 +85,7 @@
 		if (key === pairedFor) return;
 		pairedFor = key;
 		pairing = { ...ownPairing };
-		extraTags = Object.fromEntries(
-			files.map((f) => [f.path, { title: f.title ?? '', track: f.track ? String(f.track) : '' }])
-		);
+		extraTags = Object.fromEntries(files.map((f) => [f.path, { title: f.title ?? '', track: '' }]));
 	});
 
 	const pairedByHand = $derived(
@@ -109,15 +108,37 @@
 		pairing = next;
 	}
 
+	// The release's highest track number: kept files go after it unless you pick otherwise.
+	const lastTrack = $derived(Math.max(0, ...releaseTracks.map((t) => trackNumber(t) ?? 0)));
+	// Numbers to choose from: the release's, then one more for each kept file.
+	const trackChoices = $derived(
+		Array.from({ length: lastTrack + unpaired.length }, (_, i) => i + 1)
+	);
+	const takenBy = $derived(
+		new Map(releaseTracks.map((t) => [trackNumber(t), t.title ?? `track ${trackNumber(t)}`]))
+	);
+
+	/** The track number a kept file ends up with: as chosen, or next after the release's tracks. */
+	function keptNumber(file: ImportItem): number {
+		const chosen = extraTags[file.path]?.track;
+		return chosen ? Number(chosen) : lastTrack + unpaired.indexOf(file) + 1;
+	}
+
+	/** Whether another kept file, or a track on the release, ends up with the same number. */
+	function numberClashes(file: ImportItem): boolean {
+		const n = keptNumber(file);
+		return takenBy.has(n) || unpaired.some((f) => f !== file && keptNumber(f) === n);
+	}
+
 	function apply() {
-		// Only the kept files whose title or number was changed.
+		// Kept files get the number shown, and a title only when it was changed.
 		const tags: Record<string, { title: string | null; track: number | null }> = {};
 		for (const f of unpaired) {
-			const typed = extraTags[f.path];
-			const track = typed.track.trim() ? Number(typed.track) : null;
-			if (typed.title !== (f.title ?? '') || track !== (f.track || null)) {
-				tags[f.path] = { title: typed.title || null, track };
-			}
+			const title = extraTags[f.path].title;
+			tags[f.path] = {
+				title: title !== (f.title ?? '') ? title || null : null,
+				track: keptNumber(f)
+			};
 		}
 		onanswer({
 			type: 'apply',
@@ -289,13 +310,26 @@
 												{trackNumber(track)}
 											</td>
 										{:else if item && keepUnmatched}
-											<td class="num">
-												<input
-													class="tag"
-													bind:value={extraTags[item.path].track}
-													inputmode="numeric"
-													aria-label="Track number"
-												/>
+											<td class="num" class:warn={numberClashes(item)}>
+												<select
+													class="number"
+													value={String(keptNumber(item))}
+													aria-label="Track number after import"
+													title={numberClashes(item)
+														? 'Another track ends up with this number too'
+														: 'The track number this file gets'}
+													onchange={(e) => (extraTags[item.path].track = e.currentTarget.value)}
+												>
+													{#each trackChoices as n (n)}
+														<option value={String(n)}
+															>{n}{takenBy.has(n)
+																? ` · same as ${takenBy.get(n)}`
+																: n === item.track
+																	? ' (in its tags)'
+																	: ''}</option
+														>
+													{/each}
+												</select>
 											</td>
 										{:else}
 											<td class="num">{item?.track || ''}</td>
@@ -521,6 +555,10 @@
 	td small {
 		display: block;
 		font-size: 0.8em;
+	}
+	/* The closed dropdown shows just the number; the open list explains each one. */
+	select.number {
+		width: 3.6rem;
 	}
 	input.tag {
 		font: inherit;
