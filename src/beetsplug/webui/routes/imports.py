@@ -10,7 +10,7 @@ import confuse
 from beets import config
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..imports import ImportBusyError, ImportManager
 
@@ -157,6 +157,11 @@ async def import_events(request: Request, manager: Manager):
     )
 
 
+class ExtraTags(BaseModel):
+    title: str | None = Field(None, max_length=500)
+    track: int | None = Field(None, ge=0, le=9999)
+
+
 class Answer(BaseModel):
     question: int
     type: Literal["apply", "choice", "search", "id", "duplicate", "resume"]
@@ -169,6 +174,11 @@ class Answer(BaseModel):
     resume: bool | None = None
     # On apply: import files the release has no track for (bonus tracks) with the album.
     keep_unmatched: bool | None = None
+    # On apply, to pair files with release tracks by hand: every file's path -> the track's
+    # position on the release ("pos"), or None for a file the release doesn't have.
+    mapping: dict[str, int | None] | None = None
+    # On apply, for kept files the release doesn't have: their title and track number.
+    extra_tags: dict[str, ExtraTags] | None = None
 
 
 @router.post("/imports/current/answer", dependencies=[Depends(require_same_origin)])
@@ -194,6 +204,25 @@ def abort_import(manager: Manager):
     return {"ok": True}
 
 
+def check_pairing(candidate: dict[str, Any], mapping: dict[str, int | None]) -> None:
+    """A pairing names every file of the album once, and gives each release track one file."""
+    if "tracks" not in candidate:
+        raise HTTPException(400, "only album matches pair files with tracks")
+    files = {t["item"]["path"] for t in candidate["tracks"]}
+    files |= {i["path"] for i in candidate["extra_items"]}
+    positions = {t["track"]["pos"] for t in candidate["tracks"]}
+    positions |= {t["pos"] for t in candidate["extra_tracks"]}
+    if set(mapping) != files:
+        raise HTTPException(400, "the pairing must name each of the album's files")
+    taken = [pos for pos in mapping.values() if pos is not None]
+    if not set(taken) <= positions:
+        raise HTTPException(400, "the pairing names a track the release doesn't have")
+    if len(taken) != len(set(taken)):
+        raise HTTPException(400, "two files can't be the same track")
+    if not taken:
+        raise HTTPException(400, "pair at least one file with a track, or import as-is")
+
+
 def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
     """Check an answer against the open question before it reaches the import thread."""
     kind = question["kind"]
@@ -201,10 +230,23 @@ def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
         if body.type == "apply":
             if body.candidate is None or not 0 <= body.candidate < len(question["candidates"]):
                 raise HTTPException(400, "invalid candidate")
+            candidate = question["candidates"][body.candidate]
+            if body.mapping is not None:
+                check_pairing(candidate, body.mapping)
+            if body.extra_tags:
+                unpaired = (
+                    {p for p, pos in body.mapping.items() if pos is None}
+                    if body.mapping is not None
+                    else {i["path"] for i in candidate.get("extra_items", [])}
+                )
+                if not set(body.extra_tags) <= unpaired:
+                    raise HTTPException(400, "titles can only be given to files the release lacks")
             return {
                 "type": "apply",
                 "candidate": body.candidate,
                 "keep_unmatched": body.keep_unmatched,
+                "mapping": body.mapping,
+                "extra_tags": {p: t.model_dump() for p, t in (body.extra_tags or {}).items()},
             }
         if body.type == "choice":
             if body.short not in {c["short"] for c in question["choices"]}:

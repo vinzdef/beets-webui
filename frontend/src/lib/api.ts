@@ -190,6 +190,8 @@ export interface ImportItem {
 }
 
 export interface ImportTrack {
+	/** Where the track sits on the release; how a file is paired with it by hand. */
+	pos: number;
 	title: string | null;
 	artist: string | null;
 	index: number | null;
@@ -297,7 +299,15 @@ export interface StartOptions {
 }
 
 export type AnswerBody =
-	| { type: 'apply'; candidate: number; keep_unmatched?: boolean }
+	| {
+			type: 'apply';
+			candidate: number;
+			keep_unmatched?: boolean;
+			/** Files paired with tracks by hand: path -> track `pos`, or null if not on the release. */
+			mapping?: Record<string, number | null>;
+			/** Title and track number for kept files the release doesn't have, by path. */
+			extra_tags?: Record<string, { title: string | null; track: number | null }>;
+	  }
 	| { type: 'choice'; short: string }
 	| { type: 'search'; artist: string; name: string }
 	| { type: 'id'; ids: string }

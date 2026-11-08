@@ -686,3 +686,69 @@ def test_shrink_embedded_covers(client, lib, tmp_path, monkeypatch):
     client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80})
     state = wait_for_job(client, "/api/library/embedded-art")
     assert (state["rewritten"], state["unchanged"]) == (0, 2)
+
+
+def pairing(candidate):
+    """The candidate's own pairing: file path -> release track position, or None."""
+    out = {t["item"]["path"]: t["track"]["pos"] for t in candidate["tracks"]}
+    return out | {i["path"]: None for i in candidate["extra_items"]}
+
+
+def test_pair_files_with_tracks_by_hand(client, lib, album):
+    # Mark the files, since importing renames them.
+    for path in album.iterdir():
+        tags = MediaFile(path)
+        tags.comments = path.name
+        tags.save()
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    own = pairing(q["candidates"][0])
+    assert {os.path.basename(p): pos for p, pos in own.items()} == {"01.mp3": 0, "02.mp3": 1}
+
+    answer(client, q, type="apply", candidate=0, mapping={p: 1 - pos for p, pos in own.items()})
+    state = finished(client)
+    assert state["status"] == "done", state
+    assert any("paired by hand" in e["message"] for e in state["log"])
+    titles = {i.comments: i.title for i in lib.items()}
+    assert titles == {"01.mp3": "Applied Track 2", "02.mp3": "Applied Track 1"}
+
+
+@pytest.mark.parametrize("matcher", [AutotagStub.MISSING], indirect=True)
+def test_pair_and_name_a_kept_file(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    own = pairing(q["candidates"][0])
+    paired, extra = sorted(own, key=lambda p: own[p] is None)
+    # Swap which file is the release's track and which is the bonus file, and name the bonus.
+    mapping = {paired: None, extra: own[paired]}
+    tags = {paired: {"title": "Bonus Song", "track": 9}}
+    answer(
+        client, q, type="apply", candidate=0, mapping=mapping, keep_unmatched=True, extra_tags=tags
+    )
+    assert finished(client)["status"] == "done"
+
+    by_title = {i.title: i for i in lib.items()}
+    assert set(by_title) == {"Applied Track 1", "Bonus Song"}
+    assert by_title["Bonus Song"].track == 9
+    assert by_title["Bonus Song"].album == "Applied Album"
+    assert MediaFile(by_title["Bonus Song"].path).title == "Bonus Song"
+
+
+def test_rejects_bad_pairings(client, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    own = pairing(q["candidates"][0])
+    first, second = sorted(own)
+
+    def status(**body):
+        res = client.post(
+            "/api/imports/current/answer",
+            json={"question": q["id"], "type": "apply", "candidate": 0, **body},
+        )
+        return res.status_code
+
+    assert status(mapping={first: 0, second: 0}) == 400  # two files, one track
+    assert status(mapping={first: 0}) == 400  # a file left out
+    assert status(mapping={first: 0, second: 7}) == 400  # no such track
+    assert status(mapping={first: None, second: None}) == 400  # nothing paired
+    assert status(mapping=own, extra_tags={first: {"title": "x"}}) == 400  # first is paired

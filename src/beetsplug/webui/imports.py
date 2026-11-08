@@ -395,10 +395,15 @@ class WebImportSession(ImportSession):
 
             kind = answer["type"]
             if kind == "apply":
+                match, reason = task.candidates[answer["candidate"]], None
+                if answer.get("mapping") is not None and isinstance(match, AlbumMatch):
+                    match, reason = _remap(task, match, answer["mapping"]), "paired by hand"
                 return self._chose(
                     task,
-                    task.candidates[answer["candidate"]],
+                    match,
+                    reason,
                     keep_unmatched=bool(answer.get("keep_unmatched")),
+                    extra_tags=answer.get("extra_tags") or {},
                 )
             if kind == "choice":
                 choice = next(c for c in choices if c.short == answer["short"])
@@ -417,11 +422,16 @@ class WebImportSession(ImportSession):
                 task.candidates, task.rec = proposal.candidates, proposal.recommendation
 
     def _chose(
-        self, task: ImportTask, choice, reason: str | None = None, keep_unmatched: bool = False
+        self,
+        task: ImportTask,
+        choice,
+        reason: str | None = None,
+        keep_unmatched: bool = False,
+        extra_tags: dict[str, dict[str, Any]] | None = None,
     ):
         extras = choice.extra_items if isinstance(choice, AlbumMatch) else []
         if extras and keep_unmatched:
-            _keep_unmatched(task, choice)
+            _keep_unmatched(task, choice, extra_tags or {})
         if isinstance(choice, (AlbumMatch, TrackMatch)):
             what = f"Applying {choice.info.artist} - {choice.info.name}"
         else:
@@ -477,13 +487,30 @@ class WebImportSession(ImportSession):
         return choices
 
 
-def _keep_unmatched(task: ImportTask, match: AlbumMatch) -> None:
+def _remap(task: ImportTask, match: AlbumMatch, pairing: dict[str, int | None]) -> AlbumMatch:
+    """The same release with files paired to tracks by hand: file path -> the track's position
+    on the release, or None for a file the release doesn't have. Tracks no file takes are
+    missing. The distance stays beets' own, for the pairing it chose."""
+    items = {displayable_path(i.path): i for i in task.items}
+    tracks = match.info.tracks
+    mapping = {items[path]: tracks[pos] for path, pos in pairing.items() if pos is not None}
+    taken = {id(t) for t in mapping.values()}
+    return AlbumMatch(
+        distance=match.distance,
+        info=match.info,
+        mapping=mapping,
+        extra_items=[i for p, i in items.items() if pairing.get(p) is None],
+        extra_tracks=[t for t in tracks if id(t) not in taken],
+    )
+
+
+def _keep_unmatched(task: ImportTask, match: AlbumMatch, tags: dict[str, dict[str, Any]]) -> None:
     """Import the files that match no track on the release (bonus tracks, say) with the album.
 
     beets imports only an album match's matched files. Every later stage asks the task for
     `imported_items()`, so the extra files join the album there; after the release's data is
     applied they take its album fields (album, album artist, year, …) and keep their own titles
-    and track numbers.
+    and track numbers, unless `tags` (by file path) gives them a title or track number.
     """
     extras = list(match.extra_items)
     matched = match.items
@@ -496,6 +523,11 @@ def _keep_unmatched(task: ImportTask, match: AlbumMatch) -> None:
         for item in extras:
             for key in Album.item_keys:
                 item[key] = source.get(key)
+            given = tags.get(displayable_path(item.path), {})
+            if given.get("title"):
+                item.title = given["title"]
+            if given.get("track") is not None:
+                item.track = given["track"]
 
     task.apply_metadata = apply_with_extras
 
@@ -561,6 +593,8 @@ def serialize_candidate(index: int, match: AlbumMatch | TrackMatch) -> dict[str,
         "data_source": info.get("data_source"),
     }
     if isinstance(match, AlbumMatch):
+        # Where each track sits on the release: how answers pair files with tracks by hand.
+        positions = {id(t): pos for pos, t in enumerate(info.tracks)}
         data |= {
             "year": info.get("year"),
             "label": info.get("label"),
@@ -568,19 +602,20 @@ def serialize_candidate(index: int, match: AlbumMatch | TrackMatch) -> dict[str,
             "media": info.get("media"),
             "albumtype": info.get("albumtype"),
             "tracks": [
-                {"item": serialize_item(item), "track": _serialize_track(track)}
+                {"item": serialize_item(item), "track": _serialize_track(track, positions)}
                 for item, track in sorted(match.mapping.items(), key=lambda p: p[1].index or 0)
             ],
             "extra_items": [serialize_item(i) for i in match.extra_items],
-            "extra_tracks": [_serialize_track(t) for t in match.extra_tracks],
+            "extra_tracks": [_serialize_track(t, positions) for t in match.extra_tracks],
         }
     else:
         data |= {"album": info.get("album"), "length": info.get("length")}
     return data
 
 
-def _serialize_track(track) -> dict[str, Any]:
+def _serialize_track(track, positions: dict[int, int]) -> dict[str, Any]:
     return {
+        "pos": positions[id(track)],
         "title": track.get("title"),
         "artist": track.get("artist"),
         "index": track.get("index"),

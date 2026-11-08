@@ -37,22 +37,94 @@
 	let searchName = $state('');
 	let searchIds = $state('');
 
-	// A new question (e.g. after a search) starts from its best candidate again.
+	// A new question (e.g. after a search) starts from its best candidate again. The page gets a
+	// fresh copy of the same question whenever the import logs something, so compare ids.
+	let selectedFor = -1;
 	$effect(() => {
-		question.id;
+		if (question.id === selectedFor) return;
+		selectedFor = question.id;
 		selected = 0;
 	});
 
 	const task = $derived(question.task);
 	const candidate = $derived<Candidate | undefined>(question.candidates[selected]);
 	const isAlbum = $derived(task.kind === 'album');
-	const unmatchedCount = $derived(candidate?.extra_items?.length ?? 0);
+
+	// Your files and the release's tracks, for pairing them by hand.
+	const files = $derived<ImportItem[]>(
+		candidate?.tracks
+			? [...candidate.tracks.map((t) => t.item), ...(candidate.extra_items ?? [])]
+			: []
+	);
+	const releaseTracks = $derived<ImportTrack[]>(
+		candidate?.tracks
+			? [...candidate.tracks.map((t) => t.track), ...(candidate.extra_tracks ?? [])].sort(
+					(a, b) => a.pos - b.pos
+				)
+			: []
+	);
+	// How beets paired them: file path -> the track's position on the release, or null.
+	const ownPairing = $derived<Record<string, number | null>>(
+		candidate?.tracks
+			? Object.fromEntries([
+					...candidate.tracks.map((t) => [t.item.path, t.track.pos]),
+					...(candidate.extra_items ?? []).map((i) => [i.path, null])
+				])
+			: {}
+	);
+	let pairing = $state<Record<string, number | null>>({});
+	// Title and track number for files the release doesn't have, as typed.
+	let extraTags = $state<Record<string, { title: string; track: string }>>({});
+
+	// Each candidate starts from beets' own pairing and the files' own tags; fresh copies of the
+	// same question (see above) keep what you've changed.
+	let pairedFor = '';
+	$effect(() => {
+		const key = `${question.id}:${selected}`;
+		if (key === pairedFor) return;
+		pairedFor = key;
+		pairing = { ...ownPairing };
+		extraTags = Object.fromEntries(
+			files.map((f) => [f.path, { title: f.title ?? '', track: f.track ? String(f.track) : '' }])
+		);
+	});
+
+	const pairedByHand = $derived(
+		Object.keys(ownPairing).some((path) => pairing[path] !== ownPairing[path])
+	);
+	const unpaired = $derived(files.filter((f) => pairing[f.path] === null));
+	const unmatchedCount = $derived(unpaired.length);
+	const nothingPaired = $derived(
+		files.length > 0 && files.every((f) => (pairing[f.path] ?? null) === null)
+	);
+
+	/** Pair a file with a track; a file that had that track takes this file's old one. */
+	function pair(path: string, pos: number | null) {
+		const next = { ...pairing };
+		if (pos !== null) {
+			const other = Object.keys(next).find((p) => p !== path && next[p] === pos);
+			if (other) next[other] = next[path];
+		}
+		next[path] = pos;
+		pairing = next;
+	}
 
 	function apply() {
+		// Only the kept files whose title or number was changed.
+		const tags: Record<string, { title: string | null; track: number | null }> = {};
+		for (const f of unpaired) {
+			const typed = extraTags[f.path];
+			const track = typed.track.trim() ? Number(typed.track) : null;
+			if (typed.title !== (f.title ?? '') || track !== (f.track || null)) {
+				tags[f.path] = { title: typed.title || null, track };
+			}
+		}
 		onanswer({
 			type: 'apply',
 			candidate: selected,
-			...(unmatchedCount && { keep_unmatched: keepUnmatched })
+			...(pairedByHand && { mapping: pairing }),
+			...(unmatchedCount && { keep_unmatched: keepUnmatched }),
+			...(keepUnmatched && Object.keys(tags).length && { extra_tags: tags })
 		});
 	}
 	// Abort lives in the page's status bar, so it isn't repeated here.
@@ -79,16 +151,17 @@
 	type TrackRow = { item: ImportItem | null; track: ImportTrack };
 	type Row = TrackRow | { item: ImportItem; track: null };
 
-	// The release's tracklist in order, with tracks missing from your files in their place,
-	// followed by files that don't match any track.
+	// The release's tracklist in order, each track with the file paired with it (or missing),
+	// followed by files that aren't on the release.
 	const rows = $derived.by((): Row[] => {
-		if (!candidate?.tracks) return [];
-		const tracklist: TrackRow[] = [
-			...candidate.tracks,
-			...(candidate.extra_tracks ?? []).map((track) => ({ item: null, track }))
-		].sort((a, b) => (a.track.index ?? 0) - (b.track.index ?? 0));
-		const unmatched = (candidate.extra_items ?? []).map((item) => ({ item, track: null }));
-		return [...tracklist, ...unmatched];
+		const byPos = new Map(
+			files.filter((f) => pairing[f.path] != null).map((f) => [pairing[f.path], f])
+		);
+		const tracklist: TrackRow[] = releaseTracks.map((track) => ({
+			item: byPos.get(track.pos) ?? null,
+			track
+		}));
+		return [...tracklist, ...unpaired.map((item) => ({ item, track: null }))];
 	});
 
 	/** Colour for a length difference; beets itself tolerates up to 10 seconds. */
@@ -123,8 +196,13 @@
 
 	<div class="actions">
 		{#if candidate}
-			<button class="primary" onclick={apply}>
-				Apply {formatSimilarity(candidate)}% match
+			<button
+				class="primary"
+				disabled={nothingPaired}
+				title={nothingPaired ? 'Pair at least one file with a track, or use as-is' : undefined}
+				onclick={apply}
+			>
+				Apply {formatSimilarity(candidate)}% match{pairedByHand ? ', paired by hand' : ''}
 			</button>
 		{/if}
 		{#if unmatchedCount}
@@ -210,28 +288,67 @@
 											>
 												{trackNumber(track)}
 											</td>
+										{:else if item && keepUnmatched}
+											<td class="num">
+												<input
+													class="tag"
+													bind:value={extraTags[item.path].track}
+													inputmode="numeric"
+													aria-label="Track number"
+												/>
+											</td>
 										{:else}
 											<td class="num">{item?.track || ''}</td>
 										{/if}
-										{#if item}
-											<td>{item.title || item.path.split('/').pop()}</td>
+										{#if item && !track && keepUnmatched}
+											<td>
+												<input
+													class="tag"
+													bind:value={extraTags[item.path].title}
+													placeholder={item.path.split('/').pop()}
+													aria-label="Title"
+												/>
+											</td>
+											<td class="num">{formatLength(item.length)}</td>
+										{:else if item}
+											<td title={item.path.split('/').pop()}>
+												{item.title || item.path.split('/').pop()}
+											</td>
 											<td class="num">{formatLength(item.length)}</td>
 										{:else}
 											<td class="bad">missing from your files</td>
 											<td class="num"></td>
 										{/if}
 										<td class="arrow">→</td>
+										{#if item}
+											<td class:warn={track && changed(item.title, track.title)}>
+												<select
+													value={track?.pos ?? -1}
+													aria-label="Release track for {item.title || item.path}"
+													onchange={(e) => {
+														const pos = Number(e.currentTarget.value);
+														pair(item.path, pos < 0 ? null : pos);
+													}}
+												>
+													{#each releaseTracks as t (t.pos)}
+														<option value={t.pos}>{trackNumber(t)}. {t.title}</option>
+													{/each}
+													<option value={-1}>Not on this release</option>
+												</select>
+												{#if !track}
+													<small class={keepUnmatched ? 'warn' : 'bad'}>
+														{keepUnmatched ? 'kept with the album' : "won't be imported"}
+													</small>
+												{/if}
+											</td>
+										{:else}
+											<td>{track?.title}</td>
+										{/if}
 										{#if track}
-											<td class:warn={item && changed(item.title, track.title)}>{track.title}</td>
 											<td class="num {item ? lengthClass(item.length, track.length) : ''}">
 												{formatLength(track.length)}
 											</td>
 										{:else}
-											<td class={keepUnmatched ? 'warn' : 'bad'}>
-												{keepUnmatched
-													? 'not on this release: kept with the album'
-													: "not on this release: won't be imported"}
-											</td>
 											<td class="num"></td>
 										{/if}
 									</tr>
@@ -252,6 +369,14 @@
 								>)
 							</dd>
 						</dl>
+					{/if}
+					{#if pairedByHand}
+						<p class="meta">
+							Paired by hand; the match percentage is for beets' own pairing.
+							<button class="link" onclick={() => (pairing = { ...ownPairing })}
+								>Reset pairing</button
+							>
+						</p>
 					{/if}
 					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
 				</div>
@@ -381,6 +506,35 @@
 	}
 	.primary {
 		align-self: flex-start;
+	}
+	td select {
+		width: 100%;
+		max-width: 22rem;
+		font: inherit;
+		font-size: 0.95em;
+		padding: 0.15rem 0.2rem;
+		color: inherit;
+		background: transparent;
+		border: 1px solid var(--line);
+		border-radius: 4px;
+	}
+	td small {
+		display: block;
+		font-size: 0.8em;
+	}
+	input.tag {
+		font: inherit;
+		width: 100%;
+		min-width: 2.5rem;
+		box-sizing: border-box;
+		padding: 0.1rem 0.3rem;
+	}
+	button.link {
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--accent);
+		font-size: inherit;
 	}
 	.keep {
 		display: inline-flex;
