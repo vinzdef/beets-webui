@@ -12,7 +12,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # Extras for the plugins enabled in examples/local/config.yaml
+    # Extras for the plugins in examples/config.template.yaml
     "beets[embedart,fetchart,lastgenre]",
     "httpx2>=2.14.0",
     "pytest>=8",

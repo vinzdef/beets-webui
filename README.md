@@ -29,6 +29,9 @@ Imports are refused for paths outside these folders.
 
 Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 
+For a fuller setup (cover art embedding, Last.fm genres, tag and filename cleanup) start from
+[`examples/config.template.yaml`](examples/config.template.yaml).
+
 ### Without Docker
 
 `examples/local/` is a ready-made beets setup with its own config, inbox and library folder:
