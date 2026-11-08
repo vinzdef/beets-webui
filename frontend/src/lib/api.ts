@@ -109,8 +109,8 @@ export const api = {
 	fillCovers: (fetch: boolean) => post<CoverFill>('/library/covers', { fetch }),
 	shrinkStatus: () => get<ShrinkArt>('/library/embedded-art'),
 	/** Re-encode every track's embedded covers as JPEGs at most `max_width` pixels wide. */
-	shrinkArt: (max_width: number, quality: number) =>
-		post<ShrinkArt>('/library/embedded-art', { max_width, quality }),
+	shrinkArt: (max_width: number, quality: number, max_kb: number) =>
+		post<ShrinkArt>('/library/embedded-art', { max_width, quality, max_kb }),
 	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
 	previewUpdate: () => get<LibraryUpdatePreview>('/library/update'),
 	updateLibrary: () => post<LibraryUpdate>('/library/update')

@@ -291,12 +291,16 @@ def fill_missing_covers(request: Request, body: FillCovers):
 
 shrinking = BackgroundJob("webui-shrink-art")
 
-# Covers at most this wide and this big are left as they are.
-SMALL_ENOUGH = 200 * 1024
+
+# Narrower than this, a cover isn't made smaller to meet the size limit.
+MIN_WIDTH = 200
 
 
-def shrink_image(data: bytes, max_width: int, quality: int) -> bytes | None:
-    """The image as a JPEG at most `max_width` wide, or None when it's already small enough."""
+def shrink_image(data: bytes, max_width: int, quality: int, max_bytes: int) -> bytes | None:
+    """The image as a JPEG at most `max_width` wide and `max_bytes` big, or None when it's
+    already within both. Every track carries its own copy of the cover, so this is paid once
+    per track. To meet the size, the quality is lowered first, then the image made narrower
+    (down to MIN_WIDTH); if even that's too big, the smallest try is used."""
     resizer = ArtResizer.shared
     with tempfile.TemporaryDirectory() as tmp:
         ext = mediafile.image_extension(data) or "jpg"
@@ -305,19 +309,29 @@ def shrink_image(data: bytes, max_width: int, quality: int) -> bytes | None:
         size = resizer.get_size(path)
         if size is None:
             return None  # not an image the resizer can read; leave it be
-        if size[0] <= max_width and len(data) <= SMALL_ENOUGH:
+        if size[0] <= max_width and len(data) <= max_bytes:
             return None
         # Writing a .jpg converts as it resizes: PNGs and the like get much smaller as JPEGs. If
         # that fails (Pillow can't save transparency as JPEG), keep the format. On failure the
         # resizer logs it and hands back the input instead of the output.
         for out_ext in dict.fromkeys(["jpg", ext]):
             out = os.fsencode(os.path.join(tmp, f"out.{out_ext}"))
-            if resizer.resize(max_width, path, out, quality) == out:
-                return Path(os.fsdecode(out)).read_bytes()
+            width, smallest = min(max_width, size[0]), None
+            while True:
+                if resizer.resize(width, path, out, quality, max_filesize=max_bytes) != out:
+                    break
+                result = Path(os.fsdecode(out)).read_bytes()
+                if smallest is None or len(result) < len(smallest):
+                    smallest = result
+                if len(result) <= max_bytes or width <= MIN_WIDTH:
+                    return smallest
+                width = max(MIN_WIDTH, width * 3 // 4)
+            if smallest is not None:
+                return smallest
         return None
 
 
-def shrink_embedded_art(items: list[Item], max_width: int, quality: int) -> None:
+def shrink_embedded_art(items: list[Item], max_width: int, quality: int, max_bytes: int) -> None:
     """Rewrite each track's embedded covers smaller, keeping its other images and those that
     wouldn't get smaller. Tracks of an album usually share a cover, so each is shrunk once per
     album; only the current album's are kept, so memory doesn't grow with the library."""
@@ -334,7 +348,7 @@ def shrink_embedded_art(items: list[Item], max_width: int, quality: int) -> None
             for i, image in enumerate(images):
                 key = hashlib.sha1(image.data).hexdigest()
                 if key not in shrunk:
-                    shrunk[key] = shrink_image(image.data, max_width, quality)
+                    shrunk[key] = shrink_image(image.data, max_width, quality, max_bytes)
                 smaller = shrunk[key]
                 if smaller is not None and len(smaller) < len(image.data):
                     saved += len(image.data) - len(smaller)
@@ -363,6 +377,8 @@ def shrink_status():
 class ShrinkArt(BaseModel):
     max_width: int = Field(1000, ge=100, le=4000)
     quality: int = Field(85, ge=30, le=100)
+    # Each cover's target size; covers over it are shrunk even when narrow enough.
+    max_kb: int = Field(100, ge=10, le=2000)
 
 
 @router.post("/library/embedded-art", dependencies=[Depends(require_same_origin)])
@@ -372,6 +388,8 @@ def shrink_embedded_covers(request: Request, body: ShrinkArt):
     items = list(get_lib(request).items())
     state = {"total": len(items), "rewritten": 0, "unchanged": 0, "no_art": 0, "failed": 0}
     state["saved_bytes"] = 0
-    if not shrinking.start(state, lambda: shrink_embedded_art(items, body.max_width, body.quality)):
+    if not shrinking.start(
+        state, lambda: shrink_embedded_art(items, body.max_width, body.quality, body.max_kb * 1024)
+    ):
         raise HTTPException(409, "Embedded covers are already being shrunk.")
     return shrink_status()

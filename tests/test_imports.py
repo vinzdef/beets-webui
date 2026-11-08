@@ -685,7 +685,9 @@ def test_shrink_embedded_covers(client, lib, tmp_path, monkeypatch):
         ]
         tags.save()
 
-    res = client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80})
+    res = client.post(
+        "/api/library/embedded-art", json={"max_width": 500, "quality": 80, "max_kb": 60}
+    )
     assert res.status_code == 200, res.json()
     state = wait_for_job(client, "/api/library/embedded-art")
 
@@ -696,11 +698,12 @@ def test_shrink_embedded_covers(client, lib, tmp_path, monkeypatch):
         assert [i.type for i in images] == [ImageType.front, ImageType.back]
         assert images[0].mime_type == "image/jpeg"
         assert Image.open(io.BytesIO(images[0].data)).size[0] <= 500
+        assert len(images[0].data) <= 60 * 1024
         assert images[1].data == back  # too small to gain anything
         assert lib.get_item(item.id).mtime == item.current_mtime()
 
     # A second run finds nothing left to shrink.
-    client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80})
+    client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80, "max_kb": 60})
     state = wait_for_job(client, "/api/library/embedded-art")
     assert (state["rewritten"], state["unchanged"]) == (0, 2)
 
@@ -871,3 +874,21 @@ def test_kept_files_count_in_track_totals(client, lib, album):
     assert finished(client)["status"] == "done"
     assert sorted((i.track, i.tracktotal) for i in lib.items()) == [(0, 2), (2, 2)]
     assert {MediaFile(i.path).tracktotal for i in lib.items()} == {2}
+
+
+def test_shrink_narrow_but_heavy_covers(client, lib, tmp_path, monkeypatch):
+    from beets.util.artresizer import ArtResizer, PILBackend
+
+    monkeypatch.setattr(ArtResizer.shared, "local_method", PILBackend())
+    path = make_album(tmp_path / "library" / "Narrow", tracks=1)
+    album = lib.add_album([Item.from_path(str(p)) for p in sorted(path.iterdir())])
+    (item,) = album.items()
+    cover = big_png(size=400)  # narrower than the limit, but hundreds of KB
+    tags = MediaFile(item.path)
+    tags.art = cover
+    tags.save()
+
+    client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 90, "max_kb": 40})
+    state = wait_for_job(client, "/api/library/embedded-art")
+    assert state["rewritten"] == 1
+    assert len(MediaFile(item.path).art) <= 40 * 1024 < len(cover)

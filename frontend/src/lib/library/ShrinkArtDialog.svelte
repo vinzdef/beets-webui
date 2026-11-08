@@ -6,11 +6,13 @@
 
 	const WIDTHS = [500, 600, 800, 1000, 1200, 1500];
 	const QUALITIES = [70, 80, 85, 90, 95];
+	const SIZES = [50, 75, 100, 150, 200];
 
 	let dialog = $state<HTMLDialogElement>();
 	let job = $state<ShrinkArt | null>(null);
 	let maxWidth = $state(1000);
 	let quality = $state(85);
+	let maxKb = $state(100);
 	let error = $state<string | null>(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -33,7 +35,7 @@
 	async function start() {
 		error = null;
 		try {
-			job = await api.shrinkArt(maxWidth, quality);
+			job = await api.shrinkArt(maxWidth, quality, maxKb);
 			timer = setTimeout(poll, 500);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -48,9 +50,11 @@
 <dialog bind:this={dialog} {onclose}>
 	<h2>Shrink embedded covers</h2>
 	<p>
-		Re-encodes the cover art inside every track as a JPEG no wider than the size below, so the art
-		doesn't bloat your files. Covers already that small (and under 200 KB) are left alone, and a
-		track is only rewritten when it gets smaller. The cover files in album folders aren't touched.
+		Re-encodes the cover art inside every track as a JPEG within the width and size below. Every
+		track carries its own copy, so a 12-track album pays the size 12 times. Covers over the size get
+		a lower quality, and if that's not enough, are made narrower. Covers already within both are
+		left alone, and a track is only rewritten when it gets smaller. The cover files in album folders
+		aren't touched.
 	</p>
 
 	{#if job && !job.can_resize}
@@ -73,9 +77,15 @@
 	<div class="buttons">
 		{#if job?.can_resize && !job.running}
 			<label>
-				Max size
+				Max width
 				<select bind:value={maxWidth}>
 					{#each WIDTHS as w (w)}<option value={w}>{w} px</option>{/each}
+				</select>
+			</label>
+			<label title="Each track carries its own copy of the cover, so this is paid once per track">
+				Max size
+				<select bind:value={maxKb}>
+					{#each SIZES as kb (kb)}<option value={kb}>{kb} KB</option>{/each}
 				</select>
 			</label>
 			<label>
