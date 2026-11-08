@@ -57,7 +57,7 @@ export interface AlbumEdit {
 
 export type AlbumOrder = 'default' | 'artist' | 'album';
 
-export type SongColumn = 'track' | 'title' | 'artist' | 'album';
+export type SongColumn = 'track' | 'title' | 'artist' | 'album' | 'bitrate';
 export interface SongOrder {
 	sort?: SongColumn | null;
 	desc?: boolean;
@@ -69,6 +69,14 @@ export interface Page<T> {
 	offset: number;
 	limit: number;
 	results: T[];
+}
+
+/** An artist's page: their albums, others' albums they're on, and their tracks on no album. */
+export interface ArtistDetail {
+	name: string;
+	albums: Album[];
+	appears_on: Album[];
+	tracks: Item[];
 }
 
 /** A row of the artist view: an album, or a track on no album. */
@@ -92,6 +100,7 @@ export const api = {
 	albums: (q = '', order: AlbumOrder = 'default', offset = 0, limit = 100, problem = '') =>
 		get<Page<Album>>('/albums', { q, order, offset, limit, ...(problem && { problem }) }),
 	album: (id: number) => get<AlbumDetail>(`/albums/${id}`),
+	artist: (name: string) => get<ArtistDetail>('/artist', { name }),
 	/** Albums and the tracks on no album, by artist. */
 	artists: (q = '', offset = 0, limit = 100) => get<ArtistPage>('/artists', { q, offset, limit }),
 	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
@@ -124,7 +133,14 @@ export const api = {
 	editItems: (ids: number[], fields: Record<string, string>) =>
 		post<{ updated: number }>('/items', { ids, fields }, 'PATCH'),
 	/** `version` busts the browser's cache after the art changed. */
-	artUrl: (id: number, version = 0) => `/api/albums/${id}/art${version ? `?v=${version}` : ''}`,
+	/** `thumb` asks for a small copy, for covers shown in a grid. */
+	artUrl: (id: number, version = 0, thumb = false) => {
+		const params = new URLSearchParams({
+			...(version && { v: String(version) }),
+			...(thumb && { thumb: 'true' })
+		});
+		return `/api/albums/${id}/art${params.size ? `?${params}` : ''}`;
+	},
 	itemArtUrl: (id: number) => `/api/items/${id}/art`,
 	fetchArt: (id: number) => post(`/albums/${id}/art/fetch`),
 	saveArt: (id: number) => post(`/albums/${id}/art/save`),
@@ -426,6 +442,11 @@ export const imports = {
 export function formatSimilarity(candidate: { distance: number }): string {
 	const value = Math.round((1 - candidate.distance) * 1000) / 10;
 	return (candidate.distance > 0 && value >= 100 ? 99.9 : value).toFixed(1);
+}
+
+/** A bitrate (bits per second) in kbps, or '' when unknown. */
+export function formatKbps(bitrate: unknown): string {
+	return typeof bitrate === 'number' && bitrate > 0 ? String(Math.round(bitrate / 1000)) : '';
 }
 
 export function formatLength(seconds: number | null | undefined): string {

@@ -3,6 +3,7 @@
 	import type { Snapshot } from './$types';
 	import {
 		api,
+		formatKbps,
 		formatLength,
 		HEALTH_CHECKS,
 		type HealthCheck,
@@ -104,7 +105,7 @@
 	}
 
 	async function search() {
-		// A new search supersedes a Show more in flight (see loadMore).
+		// A new search supersedes loading more in flight (see loadMore).
 		loadingMore = false;
 		const current = ++generation;
 		selected = [];
@@ -161,7 +162,8 @@
 		{ column: 'track', label: '#', class: 'num' },
 		{ column: 'title', label: 'Title' },
 		{ column: 'artist', label: 'Artist' },
-		{ column: 'album', label: 'Album', class: 'album' }
+		{ column: 'album', label: 'Album', class: 'album' },
+		{ column: 'bitrate', label: 'kbps', class: 'num kbps' }
 	];
 
 	/** Show only the albums with a problem, e.g. from the health details. */
@@ -175,6 +177,7 @@
 	const SONG_PAGE = 500;
 
 	async function loadMore() {
+		if (loadingMore) return;
 		// A search that starts meanwhile makes these results stale: they're then dropped.
 		const current = generation;
 		loadingMore = true;
@@ -192,12 +195,29 @@
 		} catch (e) {
 			if (current === generation) error = e instanceof Error ? e.message : String(e);
 		} finally {
-			// A stale request mustn't re-enable Show more while a newer one is loading.
+			// A stale request mustn't end the loading state of a newer one.
 			if (current === generation) loadingMore = false;
 		}
 	}
 
 	const shown = $derived(grouping === 'song' ? songs : page);
+
+	/** Loads more once this (placed after the results) comes near the screen. It's re-created
+	 * after each load, so one still in view right away loads the next page too. */
+	function autoload(node: HTMLElement) {
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) loadMore();
+			},
+			{ rootMargin: '800px 0px' }
+		);
+		observer.observe(node);
+		return { destroy: () => observer.disconnect() };
+	}
+
+	function artistUrl(name: string) {
+		return `/artist?${new URLSearchParams({ name })}`;
+	}
 
 	/** The artists view lists tracks on no album too; health checks are about albums only. */
 	function withTracks() {
@@ -392,63 +412,74 @@
 	<p class="error">{error}</p>
 {:else if grouping === 'song'}
 	{#if songs}
-		<table class="songs">
-			<thead>
-				<tr>
-					{#if selecting}<th class="check"></th>{/if}
-					{#each songColumns as c (c.column)}
-						<th
-							class={c.class}
-							aria-sort={songSort?.column === c.column
-								? songSort.desc
-									? 'descending'
-									: 'ascending'
-								: undefined}
-						>
-							<button type="button" class="sort" onclick={() => sortSongs(c.column)}
-								>{c.label}{songSort?.column === c.column
+		<div class="scroll">
+			<table class="songs">
+				<thead>
+					<tr>
+						{#if selecting}<th class="check"></th>{/if}
+						{#each songColumns as c (c.column)}
+							<th
+								class={c.class}
+								aria-sort={songSort?.column === c.column
 									? songSort.desc
-										? ' ▼'
-										: ' ▲'
-									: ''}</button
+										? 'descending'
+										: 'ascending'
+									: undefined}
 							>
-						</th>
-					{/each}
-					<th class="num year">Year</th>
-					<th class="num">Time</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each songs.results as song (song.id)}
-					<tr title={song.path ?? undefined} class:selected={selected.includes(song.id)}>
-						{#if selecting}
-							<td class="check">
-								<input
-									type="checkbox"
-									checked={selected.includes(song.id)}
-									onchange={() => toggle(song.id)}
-									aria-label="Select {song.title}"
-								/>
-							</td>
-						{/if}
-						<td class="num">{song.track || ''}</td>
-						<td><a href="/songs/{song.id}">{song.title}</a></td>
-						<td>{song.artist}</td>
-						<td class="album">
-							{#if song.album_id}<a href="/albums/{song.album_id}">{song.album}</a
-								>{:else}{song.album}{/if}
-						</td>
-						<td class="num year">{song.year || ''}</td>
-						<td class="num">{formatLength(song.length)}</td>
+								<button type="button" class="sort" onclick={() => sortSongs(c.column)}
+									>{c.label}{songSort?.column === c.column
+										? songSort.desc
+											? ' ▼'
+											: ' ▲'
+										: ''}</button
+								>
+							</th>
+						{/each}
+						<th class="num year">Year</th>
+						<th class="num">Time</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each songs.results as song (song.id)}
+						<tr title={song.path ?? undefined} class:selected={selected.includes(song.id)}>
+							{#if selecting}
+								<td class="check">
+									<input
+										type="checkbox"
+										checked={selected.includes(song.id)}
+										onchange={() => toggle(song.id)}
+										aria-label="Select {song.title}"
+									/>
+								</td>
+							{/if}
+							<td class="num">{song.track || ''}</td>
+							<td><a href="/songs/{song.id}">{song.title}</a></td>
+							<td
+								>{#if song.artist}<a href={artistUrl(song.artist)}>{song.artist}</a>{/if}</td
+							>
+							<td class="album">
+								{#if song.album_id}<a href="/albums/{song.album_id}">{song.album}</a
+									>{:else}{song.album}{/if}
+							</td>
+							<td class="num kbps">{formatKbps(song.bitrate)}</td>
+							<td class="num year">{song.year || ''}</td>
+							<td class="num">{formatLength(song.length)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 {:else if page}
 	{#each groups as group, i (i)}
 		<section>
-			{#if group.name}<h2>{group.name}</h2>{/if}
+			{#if group.name}
+				<h2>
+					{#if group.name === 'Unknown artist'}{group.name}{:else}<a href={artistUrl(group.name)}
+							>{group.name}</a
+						>{/if}
+				</h2>
+			{/if}
 			{#if group.albums.length}
 				<ul class="grid">
 					{#each group.albums as album (album.id)}
@@ -473,7 +504,8 @@
 										/>
 									{/if}
 									<img
-										src={api.artUrl(album.id, artVersion)}
+										src={api.artUrl(album.id, artVersion, true)}
+										decoding="async"
 										alt=""
 										loading="lazy"
 										onerror={(e) => e.currentTarget.remove()}
@@ -487,27 +519,32 @@
 				</ul>
 			{/if}
 			{#if group.tracks.length}
-				<table class="songs loose">
-					<caption>Not on an album</caption>
-					<tbody>
-						{#each group.tracks as song (song.id)}
-							<tr title={song.path ?? undefined}>
-								<td><a href="/songs/{song.id}">{song.title || 'Untitled'}</a></td>
-								<td class="album">{song.album}</td>
-								<td class="num year">{song.year || ''}</td>
-								<td class="num">{formatLength(song.length)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+				<div class="scroll">
+					<table class="songs loose">
+						<caption>Not on an album</caption>
+						<tbody>
+							{#each group.tracks as song (song.id)}
+								<tr title={song.path ?? undefined}>
+									<td><a href="/songs/{song.id}">{song.title || 'Untitled'}</a></td>
+									<td class="album">{song.album}</td>
+									<td class="num kbps">{formatKbps(song.bitrate)}</td>
+									<td class="num year">{song.year || ''}</td>
+									<td class="num">{formatLength(song.length)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</section>
 	{/each}
 {/if}
 {#if !error && shown && shown.results.length < shown.total}
-	<button class="more" disabled={loadingMore} onclick={loadMore}>
-		{loadingMore ? 'Loading…' : `Show more (${shown.total - shown.results.length} left)`}
-	</button>
+	{#key shown.results.length}
+		<p class="more meta" use:autoload>
+			{loadingMore ? 'Loading…' : `${shown.total - shown.results.length} more`}
+		</p>
+	{/key}
 {/if}
 
 <dialog bind:this={dialog}>
@@ -675,6 +712,9 @@
 	.songs .check {
 		width: 2rem;
 	}
+	.songs .kbps {
+		width: 4.5rem;
+	}
 	button.sort {
 		all: unset;
 		cursor: pointer;
@@ -725,15 +765,23 @@
 		outline: 3px solid var(--accent);
 		outline-offset: 2px;
 	}
-	@media (max-width: 640px) {
-		.songs .album,
-		.songs .year {
-			display: none;
-		}
+	h2 a {
+		color: inherit;
+		text-decoration: none;
+	}
+	h2 a:hover {
+		text-decoration: underline;
+	}
+	/* On narrow screens tables keep every column and scroll sideways instead. */
+	.scroll {
+		overflow-x: auto;
+	}
+	.scroll > table {
+		min-width: 40rem;
 	}
 	.more {
-		display: block;
-		margin: 1rem auto;
+		text-align: center;
+		margin: 1rem 0;
 	}
 	dialog {
 		width: min(36rem, calc(100vw - 2rem));

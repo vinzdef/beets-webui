@@ -4,6 +4,7 @@
 	import {
 		api,
 		fieldText as text,
+		formatKbps,
 		formatLength,
 		imports,
 		type AlbumDetail,
@@ -190,6 +191,24 @@
 		return groups;
 	});
 	const multiDisc = $derived(discs.length > 1);
+
+	/** The files' format and bitrate: "FLAC · 1021 kbps", or an average and range when they vary. */
+	const quality = $derived.by(() => {
+		if (!album) return '';
+		const formats = [...new Set(album.items.map((i) => i.format).filter(Boolean))].join(', ');
+		const rates = album.items.map((i) => Number(i.bitrate)).filter((b) => b > 0);
+		let kbps = '';
+		if (rates.length) {
+			const [low, high] = [Math.min(...rates), Math.max(...rates)].map(formatKbps);
+			const average = formatKbps(rates.reduce((a, b) => a + b, 0) / rates.length);
+			kbps = low === high ? `${low} kbps` : `${average} kbps average (${low}–${high})`;
+		}
+		return [formats, kbps].filter(Boolean).join(' · ');
+	});
+
+	function artistUrl(name: string) {
+		return `/artist?${new URLSearchParams({ name })}`;
+	}
 </script>
 
 {#if album}
@@ -205,7 +224,11 @@
 		</div>
 		<div class="heading">
 			<h1>{album.album}</h1>
-			<p>{album.albumartist}{album.year ? ` · ${album.year}` : ''}</p>
+			<p>
+				{#if album.albumartist}<a href={artistUrl(album.albumartist)}>{album.albumartist}</a
+					>{/if}{album.year ? ` · ${album.year}` : ''}
+			</p>
+			{#if quality}<p class="meta">{quality}</p>{/if}
 			{#if text(album.genres) || album.label}
 				<p class="meta">{[text(album.genres), album.label].filter(Boolean).join(' · ')}</p>
 			{/if}
@@ -361,23 +384,30 @@
 			</div>
 		</form>
 	{:else}
-		<table>
-			{#each discs as group (group.disc)}
-				<tbody>
-					{#if multiDisc}
-						<tr class="disc"><th colspan="4">Disc {group.disc}</th></tr>
-					{/if}
-					{#each group.items as item (item.id)}
-						<tr>
-							<td class="num">{item.track || ''}</td>
-							<td><a href="/songs/{item.id}">{item.title}</a></td>
-							<td>{item.artist}</td>
-							<td class="num">{formatLength(item.length)}</td>
-						</tr>
-					{/each}
-				</tbody>
-			{/each}
-		</table>
+		<div class="scroll">
+			<table>
+				{#each discs as group (group.disc)}
+					<tbody>
+						{#if multiDisc}
+							<tr class="disc"><th colspan="5">Disc {group.disc}</th></tr>
+						{/if}
+						{#each group.items as item (item.id)}
+							<tr>
+								<td class="num">{item.track || ''}</td>
+								<td><a href="/songs/{item.id}">{item.title}</a></td>
+								<td>
+									{#if item.artist}<a href={artistUrl(item.artist)}>{item.artist}</a>{/if}
+								</td>
+								<td class="num kbps">
+									{formatKbps(item.bitrate)}{#if formatKbps(item.bitrate)}<small> kbps</small>{/if}
+								</td>
+								<td class="num">{formatLength(item.length)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				{/each}
+			</table>
+		</div>
 	{/if}
 {:else if error}
 	<p class="error">{error}</p>
@@ -444,6 +474,16 @@
 	}
 	.heading p {
 		margin: 0 0 0.25rem;
+	}
+	.heading p a {
+		color: inherit;
+	}
+	td.kbps {
+		width: 5.5rem;
+		white-space: nowrap;
+	}
+	.kbps small {
+		opacity: 0.7;
 	}
 	.meta {
 		opacity: 0.6;
@@ -590,5 +630,12 @@
 	}
 	.buttons.art + .meta {
 		margin-top: 0.4rem;
+	}
+	/* On narrow screens tables keep every column and scroll sideways instead. */
+	.scroll {
+		overflow-x: auto;
+	}
+	.scroll > table {
+		min-width: 30rem;
 	}
 </style>

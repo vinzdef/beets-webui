@@ -120,7 +120,11 @@
 		</div>
 		<div class="heading">
 			<h1>{item.title || 'Untitled'}</h1>
-			<p>{item.artist}</p>
+			<p>
+				{#if item.artist}<a href="/artist?{new URLSearchParams({ name: item.artist })}"
+						>{item.artist}</a
+					>{/if}
+			</p>
 			<p class="meta">
 				{#if albumId != null}
 					<a href="/albums/{albumId}">{item.album}</a>{item.track ? ` · track ${item.track}` : ''}

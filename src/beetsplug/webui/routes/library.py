@@ -3,6 +3,7 @@
 from typing import Literal
 
 from beets import ui
+from beets.dbcore.query import StringQuery
 from beets.library import Album, Item
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ SONG_ORDER = {
     "title": ["title", "artist"],
     "artist": ["artist", "album", "disc", "track"],
     "album": ["album", "disc", "track"],
+    "bitrate": ["bitrate", "artist", "album"],
 }
 # Filters for the songs view: tracks on no album ("singletons"), or only those on one.
 SONG_FILTERS = {"singletons": "singleton:true", "on_album": "singleton:false"}
@@ -87,6 +89,33 @@ def list_by_artist(
     }
 
 
+@router.get("/artist")
+def get_artist(request: Request, name: str = Query(..., min_length=1)):
+    """An artist's page: their albums, the albums of others they have tracks on (compilations,
+    say) and their tracks on no album. Names match whole, ignoring case."""
+    lib = get_lib(request)
+    albums = sorted(
+        lib.albums(StringQuery("albumartist", name)), key=lambda a: (a.year or 0, a.album.lower())
+    )
+    own = {a.id for a in albums}
+    tracks = list(lib.items(StringQuery("artist", name)))
+    others = {i.album_id for i in tracks if i.album_id is not None and i.album_id not in own}
+    appears_on = sorted(
+        filter(None, (lib.get_album(album_id) for album_id in others)),
+        key=lambda a: (a.year or 0, a.album.lower()),
+    )
+    loose = sorted((i for i in tracks if i.album_id is None), key=lambda i: i.title.lower())
+    if not (albums or appears_on or loose):
+        raise HTTPException(404, "no albums or tracks by that artist")
+    return {
+        # As the library spells it, rather than as typed.
+        "name": albums[0].albumartist if albums else tracks[0].artist,
+        "albums": [serialize(a) for a in albums],
+        "appears_on": [serialize(a) for a in appears_on],
+        "tracks": [serialize(i) for i in loose],
+    }
+
+
 @router.get("/albums/{album_id}")
 def get_album(request: Request, album_id: int):
     album = get_lib(request).get_album(album_id)
@@ -124,7 +153,7 @@ def delete_album(
 def list_items(
     request: Request,
     q: str = Query("", description="beets query string"),
-    sort: Literal["track", "title", "artist", "album"] | None = Query(
+    sort: Literal["track", "title", "artist", "album", "bitrate"] | None = Query(
         None, description="sort by this column instead of beets' default order"
     ),
     desc: bool = Query(False, description="sort that column descending"),

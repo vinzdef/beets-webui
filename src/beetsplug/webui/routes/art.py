@@ -4,6 +4,7 @@ embedding or saving it as a file."""
 import contextvars
 import hashlib
 import os
+import shutil
 import tempfile
 import threading
 from collections.abc import Callable
@@ -35,6 +36,8 @@ FOLDER_ART = ("cover", "folder", "front", "album")
 ART_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 ART_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 MAX_UPLOAD = 25 * 1024 * 1024
+# Covers in the library grid: this wide (about twice their size on screen, for sharp screens).
+THUMB_WIDTH = 400
 
 ArtSource = Literal["file", "folder", "embedded"]
 
@@ -89,6 +92,42 @@ def art_response(found: tuple[ArtSource, str | Path | bytes] | None) -> Response
     return FileResponse(art)
 
 
+def thumbnail(lib: Library, found: tuple[ArtSource, str | Path | bytes]) -> Path | None:
+    """A small JPEG of the art for the library grid. Made once and kept next to the library
+    database (webui-thumbs/), named after the art's content, or its path and modification time,
+    so a changed cover gets a new one. None when beets has no image resizer to make it with."""
+    resizer = ArtResizer.shared
+    if not resizer.local:
+        return None
+    _, art = found
+    if isinstance(art, bytes):
+        key = hashlib.sha1(art).hexdigest()
+    else:
+        stat = os.stat(art)
+        key = hashlib.sha1(f"{os.fsdecode(art)}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+        key = key.hexdigest()
+    folder = Path(os.path.dirname(os.fsdecode(lib.path))) / "webui-thumbs"
+    thumb = folder / f"{key}-{THUMB_WIDTH}.jpg"
+    if thumb.is_file():
+        return thumb
+    folder.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        if isinstance(art, bytes):
+            source = os.path.join(tmp, f"in.{mediafile.image_extension(art) or 'jpg'}")
+            Path(source).write_bytes(art)
+        else:
+            source = os.fsdecode(art)
+        out = os.fsencode(os.path.join(tmp, "thumb.jpg"))
+        # On failure the resizer logs it and hands back the input instead of the output.
+        if resizer.resize(THUMB_WIDTH, os.fsencode(source), out, quality=80) != out:
+            return None
+        # Moved in whole, so a request at the same time never reads half a file.
+        partial = folder / f".{thumb.name}.{os.getpid()}.{threading.get_ident()}"
+        shutil.copyfile(os.fsdecode(out), partial)
+        os.replace(partial, thumb)
+    return thumb
+
+
 def get_album_or_404(request: Request, album_id: int) -> Album:
     album = get_lib(request).get_album(album_id)
     if album is None:
@@ -97,8 +136,12 @@ def get_album_or_404(request: Request, album_id: int) -> Album:
 
 
 @router.get("/albums/{album_id}/art")
-def get_album_art(request: Request, album_id: int):
-    return art_response(find_art(get_album_or_404(request, album_id)))
+def get_album_art(request: Request, album_id: int, thumb: bool = False):
+    """The album's cover; with `thumb`, a small copy for the library grid when one can be made."""
+    found = find_art(get_album_or_404(request, album_id))
+    if thumb and found and (small := thumbnail(get_lib(request), found)):
+        return FileResponse(small, media_type="image/jpeg")
+    return art_response(found)
 
 
 @router.get("/items/{item_id}/art")

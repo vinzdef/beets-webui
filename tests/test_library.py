@@ -1,3 +1,5 @@
+import io
+
 from beets.library import Item
 
 
@@ -29,6 +31,23 @@ def test_artist_view_lists_loose_tracks_with_their_artist(client, lib):
 
     body = client.get("/api/artists", params={"q": "radiohead", "offset": 1}).json()
     assert [r["kind"] for r in body["results"]] == ["track"]
+
+
+def test_artist_page(client, lib):
+    (album,) = lib.albums()
+    album.albumartist = "Radiohead"
+    album.store()
+    lib.add(Item(title="Airbag", artist="radiohead", bitrate=320000, path=b"/music/airbag.mp3"))
+    lib.add_album(
+        [Item(title="Theirs", artist="Radiohead", album="Mix", albumartist="Various Artists")]
+    )
+
+    body = client.get("/api/artist", params={"name": "RADIOHEAD"}).json()
+    assert body["name"] == "Radiohead"
+    assert [a["album"] for a in body["albums"]] == ["OK Computer"]
+    assert [a["album"] for a in body["appears_on"]] == ["Mix"]
+    assert [(t["title"], t["bitrate"]) for t in body["tracks"]] == [("Airbag", 320000)]
+    assert client.get("/api/artist", params={"name": "Radio"}).status_code == 404
 
 
 def test_album_detail_includes_items(client):
@@ -100,6 +119,26 @@ def test_album_art_falls_back_to_folder_image(client, lib, tmp_path):
     res = client.get(f"/api/albums/{album.id}/art")
     assert res.status_code == 200
     assert res.content == b"\xff\xd8\xff fake jpeg"
+
+
+def test_album_art_thumbnail(client, lib, tmp_path):
+    from PIL import Image
+
+    album = lib.albums().get()
+    cover = tmp_path / "cover.png"
+    Image.new("RGB", (1200, 1200), (200, 10, 10)).save(cover)
+    album.artpath = str(cover).encode()
+    album.store()
+
+    res = client.get(f"/api/albums/{album.id}/art", params={"thumb": True})
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/jpeg"
+    assert Image.open(io.BytesIO(res.content)).size == (400, 400)
+    (thumb,) = (tmp_path / "webui-thumbs").iterdir()  # next to the library database, made once
+    assert client.get(f"/api/albums/{album.id}/art", params={"thumb": True}).content == res.content
+    assert list((tmp_path / "webui-thumbs").iterdir()) == [thumb]
+    # The full cover is still there without `thumb`.
+    assert client.get(f"/api/albums/{album.id}/art").content == cover.read_bytes()
 
 
 def test_library_health(client, lib):
