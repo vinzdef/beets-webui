@@ -2,22 +2,25 @@
 embedding or saving it as a file."""
 
 import contextvars
+import hashlib
 import os
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 import mediafile
 from beets import logging, util
 from beets.library import Album, Item, Library
+from beets.util.artresizer import ArtResizer
 
 # Private to beets' bundled plugins, but what `beet embedart` and `beet extractart` run; beets is
 # pinned to one minor version, so it doesn't move under us.
 from beetsplug._utils.art import embed_album, extract_first
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .common import find_plugin, get_lib
 from .imports import require_same_origin
@@ -185,67 +188,69 @@ def set_art_from_bytes(album: Album, data: bytes, ext: str) -> None:
         album.store()
 
 
-class CoverFill:
-    """Gives every album without an art file one, in the background: from its folder or tags
-    first, then from fetchart's sources. One run at a time; the state is polled."""
+class BackgroundJob:
+    """Library-wide work in a thread, one run at a time, with a state the page polls."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str) -> None:
+        self.name = name
         self._lock = threading.Lock()
         self.state: dict[str, Any] = {"running": False}
 
-    def start(self, lib: Library, fetch: bool) -> bool:
+    def start(self, state: dict[str, Any], work: Callable[[], None]) -> bool:
         with self._lock:
             if self.state["running"]:
                 return False
-            albums = [a for a in lib.albums() if not stored_art(a)]
-            self.state = {
-                "running": True,
-                "total": len(albums),
-                "done": 0,
-                "folder": 0,
-                "embedded": 0,
-                "fetched": 0,
-                "not_found": [],
-            }
+            self.state = {"running": True, "done": 0, **state}
+
+        def run() -> None:
+            try:
+                work()
+            finally:
+                with self._lock:
+                    self.state["running"] = False
+
         # beets resolves the library's relative paths through a context variable, which a new
         # thread doesn't inherit; run in a copy of this request's context.
         ctx = contextvars.copy_context()
-        threading.Thread(
-            target=ctx.run, args=(self._run, lib, albums, fetch), name="webui-covers", daemon=True
-        ).start()
+        threading.Thread(target=ctx.run, args=(run,), name=self.name, daemon=True).start()
         return True
 
-    def _run(self, lib: Library, albums: list[Album], fetch: bool) -> None:
-        fetchart = find_plugin("fetchart") if fetch else None
-        try:
-            for album in albums:
-                try:
-                    source = save_local_art(album)
-                    if source is None and fetchart is not None:
-                        fetchart.batch_fetch_art(lib, [album], force=False, quiet=True)
-                        album.load()
-                        source = "fetched" if stored_art(album) else None
-                except Exception:
-                    log.exception("couldn't get art for {}", album)
-                    source = None
-                with self._lock:
-                    self.state["done"] += 1
-                    if source:
-                        self.state[source] += 1
-                    else:
-                        self.state["not_found"].append(
-                            {"id": album.id, "album": album.album, "albumartist": album.albumartist}
-                        )
-        finally:
-            with self._lock:
-                self.state["running"] = False
+    def update(self, add: dict[str, int] | None = None, **append: Any) -> None:
+        """Count one more item done; add to counters and append to lists in the state."""
+        with self._lock:
+            self.state["done"] += 1
+            for key, n in (add or {}).items():
+                self.state[key] += n
+            for key, value in append.items():
+                self.state[key].append(value)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return {**self.state, "not_found": list(self.state.get("not_found", []))}
+            return {k: list(v) if isinstance(v, list) else v for k, v in self.state.items()}
 
 
-covers = CoverFill()
+covers = BackgroundJob("webui-covers")
+
+
+def fill_covers(lib: Library, albums: list[Album], fetch: bool) -> None:
+    """Give each album an art file: from its folder or tags first, then fetchart's sources."""
+    fetchart = find_plugin("fetchart") if fetch else None
+    for album in albums:
+        try:
+            source = save_local_art(album)
+            if source is None and fetchart is not None:
+                fetchart.batch_fetch_art(lib, [album], force=False, quiet=True)
+                album.load()
+                source = "fetched" if stored_art(album) else None
+        except Exception:
+            log.exception("couldn't get art for {}", album)
+            source = None
+        if source:
+            covers.update({source: 1})
+        else:
+            covers.update(
+                not_found={"id": album.id, "album": album.album, "albumartist": album.albumartist}
+            )
 
 
 @router.get("/library/covers")
@@ -261,6 +266,92 @@ class FillCovers(BaseModel):
 
 @router.post("/library/covers", dependencies=[Depends(require_same_origin)])
 def fill_missing_covers(request: Request, body: FillCovers):
-    if not covers.start(get_lib(request), body.fetch):
+    lib = get_lib(request)
+    albums = [a for a in lib.albums() if not stored_art(a)]
+    state = {"total": len(albums), "folder": 0, "embedded": 0, "fetched": 0, "not_found": []}
+    if not covers.start(state, lambda: fill_covers(lib, albums, body.fetch)):
         raise HTTPException(409, "Missing covers are already being filled.")
     return cover_fill_status()
+
+
+shrinking = BackgroundJob("webui-shrink-art")
+
+# Covers at most this wide and this big are left as they are.
+SMALL_ENOUGH = 200 * 1024
+
+
+def shrink_image(data: bytes, max_width: int, quality: int) -> bytes | None:
+    """The image as a JPEG at most `max_width` wide, or None when it's already small enough."""
+    resizer = ArtResizer.shared
+    with tempfile.TemporaryDirectory() as tmp:
+        ext = mediafile.image_extension(data) or "jpg"
+        path = os.fsencode(os.path.join(tmp, f"in.{ext}"))
+        Path(os.fsdecode(path)).write_bytes(data)
+        size = resizer.get_size(path)
+        if size is None:
+            return None  # not an image the resizer can read; leave it be
+        if size[0] <= max_width and len(data) <= SMALL_ENOUGH:
+            return None
+        # Writing a .jpg converts as it resizes: PNGs and the like get much smaller as JPEGs. If
+        # that fails (Pillow can't save transparency as JPEG), keep the format. On failure the
+        # resizer logs it and hands back the input instead of the output.
+        for out_ext in dict.fromkeys(["jpg", ext]):
+            out = os.fsencode(os.path.join(tmp, f"out.{out_ext}"))
+            if resizer.resize(max_width, path, out, quality) == out:
+                return Path(os.fsdecode(out)).read_bytes()
+        return None
+
+
+def shrink_embedded_art(items: list[Item], max_width: int, quality: int) -> None:
+    """Rewrite each track's embedded covers smaller, keeping its other images and those that
+    wouldn't get smaller. Tracks of an album usually share a cover, so each is shrunk once."""
+    shrunk: dict[str, bytes | None] = {}
+    for item in items:
+        try:
+            tags = mediafile.MediaFile(util.syspath(item.path))
+            images = tags.images or []
+            changed, saved = False, 0
+            for i, image in enumerate(images):
+                key = hashlib.sha1(image.data).hexdigest()
+                if key not in shrunk:
+                    shrunk[key] = shrink_image(image.data, max_width, quality)
+                smaller = shrunk[key]
+                if smaller is not None and len(smaller) < len(image.data):
+                    saved += len(image.data) - len(smaller)
+                    images[i] = mediafile.Image(smaller, desc=image.desc, type=image.type)
+                    changed = True
+            if changed:
+                tags.images = images
+                tags.save()
+                # beets would otherwise think the file changed outside it on the next update.
+                item.mtime = item.current_mtime()
+                item.store()
+                shrinking.update({"rewritten": 1, "saved_bytes": saved})
+            else:
+                shrinking.update({"unchanged" if images else "no_art": 1})
+        except Exception:
+            log.exception("couldn't shrink the art in {}", util.displayable_path(item.path))
+            shrinking.update({"failed": 1})
+
+
+@router.get("/library/embedded-art")
+def shrink_status():
+    """How the current (or last) run of shrinking embedded covers is going."""
+    return {**shrinking.snapshot(), "can_resize": bool(ArtResizer.shared.local)}
+
+
+class ShrinkArt(BaseModel):
+    max_width: int = Field(1000, ge=100, le=4000)
+    quality: int = Field(85, ge=30, le=100)
+
+
+@router.post("/library/embedded-art", dependencies=[Depends(require_same_origin)])
+def shrink_embedded_covers(request: Request, body: ShrinkArt):
+    if not ArtResizer.shared.local:
+        raise HTTPException(400, "Shrinking images needs ImageMagick or Pillow on the server.")
+    items = list(get_lib(request).items())
+    state = {"total": len(items), "rewritten": 0, "unchanged": 0, "no_art": 0, "failed": 0}
+    state["saved_bytes"] = 0
+    if not shrinking.start(state, lambda: shrink_embedded_art(items, body.max_width, body.quality)):
+        raise HTTPException(409, "Embedded covers are already being shrunk.")
+    return shrink_status()

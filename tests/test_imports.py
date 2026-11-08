@@ -622,3 +622,67 @@ def test_keep_unmatched_files_on_the_album(client, lib, album):
     tags = MediaFile(kept.path)
     assert (tags.album, tags.title) == ("Applied Album", extra["title"])
     assert any(e["message"].startswith("Keeping files") for e in state["log"])
+
+
+def big_png(size=2000):
+    import io
+
+    from PIL import Image
+
+    image = Image.effect_noise((size, size), 64).convert("RGB")
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return out.getvalue()
+
+
+def wait_for_job(client, path):
+    deadline = time.monotonic() + 30
+    while (state := client.get(path).json())["running"]:
+        assert time.monotonic() < deadline, state
+        time.sleep(0.05)
+    return state
+
+
+def test_shrink_embedded_covers(client, lib, tmp_path, monkeypatch):
+    import io
+
+    from beets.util.artresizer import ArtResizer, PILBackend
+
+    # Pillow, as in the Docker image (some ImageMagick builds lack JPEG and keep PNG).
+    monkeypatch.setattr(ArtResizer.shared, "local_method", PILBackend())
+
+    from mediafile import Image as TagImage
+    from mediafile import ImageType
+    from PIL import Image
+
+    path = make_album(tmp_path / "library" / "Big", tracks=3)
+    album = lib.add_album([Item.from_path(str(p)) for p in sorted(path.iterdir())])
+    first, second, bare = sorted(album.items(), key=lambda i: i.track)
+    cover, back = big_png(), PNG
+    for item in (first, second):
+        tags = MediaFile(item.path)
+        # ID3 keeps one picture per description, so they need different ones.
+        tags.images = [
+            TagImage(cover, desc="front", type=ImageType.front),
+            TagImage(back, desc="back", type=ImageType.back),
+        ]
+        tags.save()
+
+    res = client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80})
+    assert res.status_code == 200, res.json()
+    state = wait_for_job(client, "/api/library/embedded-art")
+
+    assert (state["total"], state["rewritten"], state["no_art"], state["failed"]) == (3, 2, 1, 0)
+    assert state["saved_bytes"] > 0
+    for item in (first, second):
+        images = MediaFile(item.path).images
+        assert [i.type for i in images] == [ImageType.front, ImageType.back]
+        assert images[0].mime_type == "image/jpeg"
+        assert Image.open(io.BytesIO(images[0].data)).size[0] <= 500
+        assert images[1].data == back  # too small to gain anything
+        assert lib.get_item(item.id).mtime == item.current_mtime()
+
+    # A second run finds nothing left to shrink.
+    client.post("/api/library/embedded-art", json={"max_width": 500, "quality": 80})
+    state = wait_for_job(client, "/api/library/embedded-art")
+    assert (state["rewritten"], state["unchanged"]) == (0, 2)

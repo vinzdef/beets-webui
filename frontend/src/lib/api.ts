@@ -104,6 +104,10 @@ export const api = {
 	coverFill: () => get<CoverFill>('/library/covers'),
 	/** Give every album without an art file one: from its folder or tags, then fetchart. */
 	fillCovers: (fetch: boolean) => post<CoverFill>('/library/covers', { fetch }),
+	shrinkStatus: () => get<ShrinkArt>('/library/embedded-art'),
+	/** Re-encode every track's embedded covers as JPEGs at most `max_width` pixels wide. */
+	shrinkArt: (max_width: number, quality: number) =>
+		post<ShrinkArt>('/library/embedded-art', { max_width, quality }),
 	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
 	previewUpdate: () => get<LibraryUpdatePreview>('/library/update'),
 	updateLibrary: () => post<LibraryUpdate>('/library/update')
@@ -126,6 +130,20 @@ export interface CoverFill {
 	embedded?: number;
 	fetched?: number;
 	not_found?: Pick<Album, 'id' | 'album' | 'albumartist'>[];
+}
+
+export interface ShrinkArt {
+	/** Whether the server can resize images (ImageMagick or Pillow). */
+	can_resize: boolean;
+	running: boolean;
+	// Absent before the first run; counts are tracks.
+	total?: number;
+	done?: number;
+	rewritten?: number;
+	unchanged?: number;
+	no_art?: number;
+	failed?: number;
+	saved_bytes?: number;
 }
 
 export interface LibraryHealth {

@@ -14,6 +14,8 @@
 	} from '$lib/api';
 	import BulkEditDialog from '$lib/library/BulkEditDialog.svelte';
 	import CoverFillDialog from '$lib/library/CoverFillDialog.svelte';
+	import ShrinkArtDialog from '$lib/library/ShrinkArtDialog.svelte';
+	import ToolsMenu from '$lib/library/ToolsMenu.svelte';
 	import HealthGauge from '$lib/library/HealthGauge.svelte';
 
 	// 'song' lists tracks instead of albums.
@@ -44,6 +46,7 @@
 	let selected = $state<number[]>([]);
 	let bulkEditing = $state(false);
 	let fillingCovers = $state(false);
+	let shrinkingArt = $state(false);
 	// Bumped when covers were added, so the grid doesn't show the browser's cached "no cover".
 	let artVersion = $state(0);
 	// Bumped after changes, so the health gauge checks again.
@@ -212,8 +215,13 @@
 >
 	<input bind:value={query} placeholder="beets query, e.g. artist:radiohead year:1990..1999" />
 	<button>Search</button>
-	<button type="button" onclick={openUpdate}>Update library…</button>
-	<button type="button" onclick={() => (fillingCovers = true)}>Fill missing covers…</button>
+	<ToolsMenu
+		items={[
+			{ label: 'Update library…', action: openUpdate },
+			{ label: 'Fill missing covers…', action: () => (fillingCovers = true) },
+			{ label: 'Shrink embedded covers…', action: () => (shrinkingArt = true) }
+		]}
+	/>
 </form>
 
 <div class="toolbar">
@@ -264,6 +272,10 @@
 		{/key}
 	</div>
 </div>
+
+{#if shrinkingArt}
+	<ShrinkArtDialog onclose={() => (shrinkingArt = false)} />
+{/if}
 
 {#if fillingCovers}
 	<CoverFillDialog
