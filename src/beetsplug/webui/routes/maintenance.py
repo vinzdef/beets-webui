@@ -9,9 +9,10 @@ from beets import ui, util
 from beets.library import Album, Item, Library
 from beets.ui.commands.update import update_items
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from .art import embedded_art, folder_image, stored_art
-from .common import get_lib
+from .common import find_plugin, get_lib
 from .imports import require_same_origin
 
 router = APIRouter()
@@ -214,3 +215,60 @@ def library_health(request: Request):
             for check, (label, description) in HEALTH_CHECKS.items()
         ],
     }
+
+
+def ftintitle_plugin():
+    """The ftintitle plugin from the beets config: its settings (format, drop, …) apply."""
+    plugin = find_plugin("ftintitle")
+    if plugin is None:
+        raise HTTPException(
+            400, "Add ftintitle to the plugins in your beets config to move featured artists."
+        )
+    return plugin
+
+
+def moved_feat(plugin, item: Item) -> Item | None:
+    """The track as ftintitle would leave it, or None when it has nothing to move."""
+    copy = item.copy()
+    return copy if plugin.ft_in_title(copy, item.get("albumartist") or "") else None
+
+
+@router.get("/library/ftintitle")
+def preview_ftintitle(request: Request):
+    """Every track whose artist names a featured artist, with the artist and title it'd get."""
+    plugin = ftintitle_plugin()
+    changes = []
+    for item in get_lib(request).items():
+        if (after := moved_feat(plugin, item)) is not None:
+            changes.append(
+                {
+                    "id": item.id,
+                    "album_id": item.album_id,
+                    "album": item.album,
+                    "artist": item.artist,
+                    "title": item.title,
+                    "new_artist": after.artist,
+                    "new_title": after.title,
+                }
+            )
+    return {"changes": changes, "moves_files": ui.should_move()}
+
+
+class ApplyFtInTitle(BaseModel):
+    # The tracks approved in the preview.
+    ids: list[int] = Field(min_length=1)
+
+
+@router.post("/library/ftintitle", dependencies=[Depends(require_same_origin)])
+def apply_ftintitle(request: Request, body: ApplyFtInTitle):
+    """Like `beet ftintitle` on the approved tracks: store, write the tags, move files to match."""
+    plugin = ftintitle_plugin()
+    lib = get_lib(request)
+    write, move = ui.should_write(), ui.should_move()
+    changed = 0
+    for item_id in body.ids:
+        item = lib.get_item(item_id)
+        if item is not None and plugin.ft_in_title(item, item.get("albumartist") or ""):
+            item.try_sync(write, move)
+            changed += 1
+    return {"changed": changed}

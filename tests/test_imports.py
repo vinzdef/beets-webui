@@ -752,3 +752,36 @@ def test_rejects_bad_pairings(client, album):
     assert status(mapping={first: 0, second: 7}) == 400  # no such track
     assert status(mapping={first: None, second: None}) == 400  # nothing paired
     assert status(mapping=own, extra_tags={first: {"title": "x"}}) == 400  # first is paired
+
+
+def test_move_featured_artists_with_approval(client, lib, album, config, monkeypatch):
+    from beetsplug.ftintitle import FtInTitlePlugin
+
+    imported = imported_album(client, lib, album)
+    assert client.get("/api/library/ftintitle").status_code == 400  # plugin off
+
+    config["ftintitle"]["auto"] = False  # no import listeners left behind for other tests
+    plugin = FtInTitlePlugin()
+    monkeypatch.setattr(
+        "beetsplug.webui.routes.maintenance.find_plugin",
+        lambda name: plugin if name == "ftintitle" else None,
+    )
+    first, second = sorted(imported.items(), key=lambda i: i.title)
+    for item in (first, second):
+        item.artist = "Applied Artist feat. Guest"
+        item.store()
+
+    changes = client.get("/api/library/ftintitle").json()["changes"]
+    assert [(c["id"], c["new_artist"], c["new_title"]) for c in changes] == [
+        (first.id, "Applied Artist", "Applied Track 1 feat. Guest"),
+        (second.id, "Applied Artist", "Applied Track 2 feat. Guest"),
+    ]
+    # Previewing changes nothing.
+    assert lib.get_item(first.id).artist == "Applied Artist feat. Guest"
+
+    res = client.post("/api/library/ftintitle", json={"ids": [first.id]})
+    assert res.json() == {"changed": 1}
+    done, untouched = lib.get_item(first.id), lib.get_item(second.id)
+    assert (done.artist, done.title) == ("Applied Artist", "Applied Track 1 feat. Guest")
+    assert MediaFile(done.path).artist == "Applied Artist"
+    assert untouched.artist == "Applied Artist feat. Guest"

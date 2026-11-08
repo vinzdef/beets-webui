@@ -75,8 +75,8 @@ docker compose up -d --build     # http://127.0.0.1:8338, restarts automatically
 
 It's a self-contained test environment:
 
-- `config/config.yaml`: beets config with the MusicBrainz autotagger, fetchart, mbsync and the web
-  UI. The library database and logs are written next to it.
+- `config/config.yaml`: beets config with the MusicBrainz autotagger, fetchart, mbsync, ftintitle
+  and the web UI. The library database and logs are written next to it.
 - `inbox/`: put music to import here. It's the inbox named "Inbox" in the config; add more by
   mounting folders in `compose.yaml` and naming them under `webui.inboxes`.
 - `music/`: the beets library folder. Imports *copy* from the inbox, so you can wipe `music/` and
@@ -193,6 +193,7 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 - [x] Song pages: edit a track (and re-import a single track); bulk edits on selected albums or songs
 - [x] Album art: fetch (fetchart), upload, save a folder image or embedded art as the art file, embed
 - [x] Refresh an album or single track from MusicBrainz (with the `mbsync` plugin)
+- [x] Move "feat." from track artists into titles, after approving each change (with `ftintitle`)
 - [x] Library health: missing files and tracks, no cover, unmatched albums, duplicates
 - [x] Re-import an album already in the library to match it again (`beet import -L`)
 - [x] Installable as a PWA

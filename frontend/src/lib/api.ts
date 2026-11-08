@@ -101,6 +101,9 @@ export const api = {
 	embedArt: (id: number) => post(`/albums/${id}/art/embed`),
 	uploadArt: (id: number, image: Blob) => send(`/albums/${id}/art`, 'PUT', image),
 	health: () => get<LibraryHealth>('/library/health'),
+	/** What ftintitle would change: featured artists moved from the artist into the title. */
+	previewFeat: () => get<FeatPreview>('/library/ftintitle'),
+	moveFeat: (ids: number[]) => post<{ changed: number }>('/library/ftintitle', { ids }),
 	coverFill: () => get<CoverFill>('/library/covers'),
 	/** Give every album without an art file one: from its folder or tags, then fetchart. */
 	fillCovers: (fetch: boolean) => post<CoverFill>('/library/covers', { fetch }),
@@ -144,6 +147,20 @@ export interface ShrinkArt {
 	no_art?: number;
 	failed?: number;
 	saved_bytes?: number;
+}
+
+export interface FeatPreview {
+	changes: {
+		id: number;
+		album_id: number | null;
+		album: string;
+		artist: string;
+		title: string;
+		new_artist: string;
+		new_title: string;
+	}[];
+	/** Whether files are renamed to match their new titles. */
+	moves_files: boolean;
 }
 
 export interface LibraryHealth {
