@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { imports, type AnswerBody, type ImportJob, type InboxRoot } from '$lib/api';
+	import { imports, type AnswerBody, type ImportJob, type Inbox } from '$lib/api';
 	import MatchQuestion from '$lib/import/MatchQuestion.svelte';
 	import OtherQuestion from '$lib/import/OtherQuestion.svelte';
 
 	let job = $state<ImportJob | null>(null);
-	let roots = $state<InboxRoot[]>([]);
+	let inboxes = $state<Inbox[]>([]);
 	let selected = $state<string[]>([]);
 	type AskMode = 'exact' | 'config' | 'always';
 	const ASK_MODE_KEY = 'beets-webui.import.ask';
@@ -50,8 +50,8 @@
 
 	async function loadInbox() {
 		try {
-			roots = (await imports.inbox()).roots;
-			const paths = new Set(roots.flatMap((r) => r.entries.map((e) => e.path)));
+			inboxes = (await imports.inboxes()).inboxes;
+			const paths = new Set(inboxes.flatMap((i) => i.entries.map((e) => e.path)));
 			selected = selected.filter((p) => paths.has(p));
 		} catch (e) {
 			error = String(e);
@@ -131,21 +131,21 @@
 	{/if}
 
 	<section class="picker">
-		{#if roots.length === 0}
+		{#if inboxes.length === 0}
 			<p>
-				No inbox folders are configured. Add them to your beets config:
-				<code>webui: inbox: [/path/to/inbox]</code>
+				No inboxes are configured. Add named folders to your beets config:
+				<code>webui: &#123;inboxes: &#123;Downloads: ~/Downloads&#125;&#125;</code>
 			</p>
 		{/if}
-		{#each roots as root (root.path)}
-			<h2>{root.path}</h2>
-			{#if !root.exists}
+		{#each inboxes as inbox (inbox.name)}
+			<h2>{inbox.name} <span class="folder">{inbox.path}</span></h2>
+			{#if !inbox.exists}
 				<p class="error">This folder doesn't exist.</p>
-			{:else if root.entries.length === 0}
+			{:else if inbox.entries.length === 0}
 				<p class="meta">Empty. Put albums here to import them.</p>
 			{:else}
 				<ul>
-					{#each root.entries as entry (entry.path)}
+					{#each inbox.entries as entry (entry.path)}
 						<li>
 							<label>
 								<input type="checkbox" value={entry.path} bind:group={selected} />
@@ -157,7 +157,7 @@
 			{/if}
 		{/each}
 
-		{#if roots.length}
+		{#if inboxes.length}
 			<fieldset>
 				<legend>Ask me about a match</legend>
 				<label>
@@ -214,6 +214,12 @@
 	h2 {
 		font-size: 1rem;
 		margin: 1.5rem 0 0.5rem;
+	}
+	.folder {
+		font-weight: normal;
+		font-size: 0.85em;
+		opacity: 0.55;
+		margin-left: 0.5rem;
 		word-break: break-all;
 	}
 	.status {

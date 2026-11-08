@@ -5,4 +5,6 @@ library: /config/library.db
 plugins: musicbrainz webui
 
 webui:
-  inbox: /inbox
+  # Named folders to import from. Each must be mounted into the container.
+  inboxes:
+    Inbox: /inbox

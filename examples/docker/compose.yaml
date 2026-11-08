@@ -11,5 +11,7 @@ services:
     volumes:
       - ${BEETS_CONFIG_DIR:-./config}:/config
       - ${MUSIC_DIR:-./music}:/music
-      # Folder that imports read new music from
+      # Inboxes: folders the UI imports from. Each one also needs a name in config/config.yaml
+      # under webui.inboxes, using its path inside the container.
       - ${INBOX_DIR:-./inbox}:/inbox
+      # - ~/Downloads/music:/inboxes/downloads

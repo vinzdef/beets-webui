@@ -35,35 +35,46 @@ def get_manager(request: Request) -> ImportManager:
 Manager = Annotated[ImportManager, Depends(get_manager)]
 
 
-def inbox_dirs() -> list[Path]:
+def configured_inboxes() -> dict[str, Path]:
+    """The inboxes from `webui.inboxes`, a mapping of name to folder, in config order."""
     try:
-        dirs = config["webui"]["inbox"].as_str_seq()
+        inboxes = config["webui"]["inboxes"].get(dict)
     except confuse.NotFoundError:
-        return []
-    return [Path(os.path.expanduser(d)).resolve() for d in dirs]
+        return {}
+    except confuse.ConfigTypeError:
+        raise HTTPException(
+            500, "webui.inboxes must be a mapping of names to folders, e.g. Downloads: ~/Downloads"
+        ) from None
+    return {
+        str(name): Path(os.path.expanduser(str(folder))).resolve()
+        for name, folder in inboxes.items()
+    }
 
 
 def resolve_in_inbox(path: str) -> Path:
     resolved = Path(path).resolve()
-    if not any(resolved == d or resolved.is_relative_to(d) for d in inbox_dirs()):
-        raise HTTPException(400, f"not inside an inbox directory: {path}")
+    folders = configured_inboxes().values()
+    if not any(resolved == f or resolved.is_relative_to(f) for f in folders):
+        raise HTTPException(400, f"not inside an inbox: {path}")
     if not resolved.exists():
         raise HTTPException(400, f"no such file or directory: {path}")
     return resolved
 
 
-@router.get("/inbox")
-def list_inbox():
-    roots = []
-    for root in inbox_dirs():
+@router.get("/inboxes")
+def list_inboxes():
+    inboxes = []
+    for name, folder in configured_inboxes().items():
         entries = []
-        if root.is_dir():
-            for entry in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if folder.is_dir():
+            for entry in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
                 if entry.name.startswith("."):
                     continue
                 entries.append({"name": entry.name, "path": str(entry), "is_dir": entry.is_dir()})
-        roots.append({"path": str(root), "exists": root.is_dir(), "entries": entries})
-    return {"roots": roots}
+        inboxes.append(
+            {"name": name, "path": str(folder), "exists": folder.is_dir(), "entries": entries}
+        )
+    return {"inboxes": inboxes}
 
 
 class StartImport(BaseModel):

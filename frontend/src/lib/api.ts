@@ -47,7 +47,8 @@ export interface InboxEntry {
 	is_dir: boolean;
 }
 
-export interface InboxRoot {
+export interface Inbox {
+	name: string;
 	path: string;
 	exists: boolean;
 	entries: InboxEntry[];
@@ -183,7 +184,7 @@ async function post<T>(path: string, body: unknown = {}): Promise<T> {
 }
 
 export const imports = {
-	inbox: () => get<{ roots: InboxRoot[] }>('/inbox'),
+	inboxes: () => get<{ inboxes: Inbox[] }>('/inboxes'),
 	start: (paths: string[], options: StartOptions) =>
 		post<ImportJob>('/imports', { paths, ...options }),
 	answer: (question: number, body: AnswerBody) =>

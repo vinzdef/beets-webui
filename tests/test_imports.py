@@ -33,7 +33,10 @@ def config(tmp_path):
     config["directory"] = str(tmp_path / "library")
     config["threaded"] = True  # the web session must cope with real pipeline threads
     config["import"].set({"copy": True, "write": True, "resume": False, "timid": True})
-    config["webui"]["inbox"] = [str(tmp_path / "inbox")]
+    config["webui"]["inboxes"] = {
+        "Downloads": str(tmp_path / "inbox"),
+        "Rips": str(tmp_path / "rips"),
+    }
     return config
 
 
@@ -87,10 +90,41 @@ def answer(client, q, **body):
     assert response.status_code == 200, response.json()
 
 
-def test_inbox_lists_entries(client, album):
-    roots = client.get("/api/inbox").json()["roots"]
-    assert [e["name"] for e in roots[0]["entries"]] == ["Tag Album"]
-    assert roots[0]["entries"][0]["is_dir"]
+def test_lists_named_inboxes_in_config_order(client, album, tmp_path):
+    make_album(tmp_path / "rips" / "Rip")
+
+    inboxes = client.get("/api/inboxes").json()["inboxes"]
+
+    assert [i["name"] for i in inboxes] == ["Downloads", "Rips"]
+    assert [e["name"] for e in inboxes[0]["entries"]] == ["Tag Album"]
+    assert inboxes[0]["entries"][0]["is_dir"]
+    assert [e["name"] for e in inboxes[1]["entries"]] == ["Rip"]
+
+
+def test_imports_from_any_inbox(client, lib, tmp_path):
+    rip = make_album(tmp_path / "rips" / "Rip")
+    client.post("/api/imports", json={"paths": [str(rip)]}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+
+    assert finished(client)["status"] == "done"
+    assert len(lib.albums()) == 1
+
+
+def test_missing_inbox_folder_is_reported(client):
+    inboxes = client.get("/api/inboxes").json()["inboxes"]
+    assert inboxes[1] == {
+        "name": "Rips",
+        "path": inboxes[1]["path"],
+        "exists": False,
+        "entries": [],
+    }
+
+
+def test_inboxes_must_be_a_mapping(client, config):
+    config["webui"]["inboxes"] = ["/somewhere"]
+    response = client.get("/api/inboxes")
+    assert response.status_code == 500
+    assert "mapping" in response.json()["detail"]
 
 
 def test_refuses_paths_outside_inbox(client, tmp_path):

@@ -15,8 +15,9 @@ class WebUIPlugin(BeetsPlugin):
             {
                 "host": "127.0.0.1",
                 "port": 8338,
-                # Directories the UI may import from. Imports are refused outside these.
-                "inbox": [],
+                # Named folders the UI may import from, e.g. {"Downloads": "~/Downloads"}.
+                # Imports are refused outside these.
+                "inboxes": {},
             }
         )
 

@@ -4,7 +4,7 @@ Implemented in `src/beetsplug/webui/imports.py` (session and job) and `routes/im
 Still open: forwarding terminal prompts from plugins, blocking edits to items in an active import,
 Host validation and authentication.
 
-API: `GET /api/inbox`, `POST /api/imports`, `GET /api/imports/current`, server-sent events at
+API: `GET /api/inboxes`, `POST /api/imports`, `GET /api/imports/current`, server-sent events at
 `GET /api/imports/current/events` (the full job state on every change), and
 `POST /api/imports/current/answer` / `abort`.
 
@@ -95,7 +95,7 @@ to it can lose changes, though: reject edits to items in the active session.
 
 ## Security (before any write endpoint ships)
 
-- Restrict import paths to configured inbox directories.
+- Restrict import paths to the configured inboxes (`webui.inboxes`, name → folder). Done.
 - Require a token or check `Origin` on every write and on the WebSocket (CSRF / cross-site
   WebSocket hijacking).
 - Validate `Host` to block DNS rebinding against the localhost default.

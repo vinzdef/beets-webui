@@ -20,8 +20,12 @@ plugins: webui   # alongside your other plugins
 webui:
   host: 127.0.0.1
   port: 8338
-  inbox: [~/Music/inbox]   # folders the UI may import from
+  inboxes:                 # named folders the UI may import from
+    Downloads: ~/Downloads/music
+    Vinyl rips: /mnt/rips
 ```
+
+Imports are refused for paths outside these folders.
 
 Then run `beet webui` (or `beet webui 0.0.0.0 8080` to override host/port).
 
@@ -38,7 +42,8 @@ It's a self-contained test environment:
 
 - `config/config.yaml`: beets config with the MusicBrainz autotagger, fetchart and the web UI.
   The library database and logs are written next to it.
-- `inbox/`: put music to import here.
+- `inbox/`: put music to import here. It's the inbox named "Inbox" in the config; add more by
+  mounting folders in `compose.yaml` and naming them under `webui.inboxes`.
 - `music/`: the beets library folder. Imports *copy* from the inbox, so you can wipe `music/` and
   `config/library.db` and import the same files again.
 
@@ -98,7 +103,7 @@ examples/docker/         compose test environment (config, inbox, music)
 - [x] Browse/search albums and items using beets query syntax
 - [ ] Edit metadata: `PATCH /api/items/{id}` and `/api/albums/{id}`, then `item.try_sync(write, move)`
       to mirror `beet modify`, with bulk edits over a query
-- [x] Imports from configured inbox folders, with live progress
+- [x] Imports from named inbox folders, with live progress
 - [x] Interactive matching with the CLI's choices: apply a candidate, skip, as-is, as tracks, group
       albums, rescan, search by name or ID, plugin choices, duplicates, resume; see
       [docs/interactive-import.md](docs/interactive-import.md)
