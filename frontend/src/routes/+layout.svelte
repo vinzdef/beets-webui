@@ -7,8 +7,11 @@
 <header>
 	<a class="brand" href="/">beets</a>
 	<nav>
-		<a href="/" class:current={page.url.pathname === '/' || page.url.pathname.startsWith('/albums')}
-			>Library</a
+		<a
+			href="/"
+			class:current={page.url.pathname === '/' ||
+				page.url.pathname.startsWith('/albums') ||
+				page.url.pathname.startsWith('/songs')}>Library</a
 		>
 		<a href="/import" class:current={page.url.pathname.startsWith('/import')}>Import</a>
 	</nav>

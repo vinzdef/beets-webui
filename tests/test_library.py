@@ -1,3 +1,6 @@
+from beets.library import Item
+
+
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
@@ -64,3 +67,19 @@ def test_album_art_falls_back_to_folder_image(client, lib, tmp_path):
     res = client.get(f"/api/albums/{album.id}/art")
     assert res.status_code == 200
     assert res.content == b"\xff\xd8\xff fake jpeg"
+
+
+def test_library_health(client, lib):
+    # The fixture's files don't exist, and it was never matched or given art.
+    lib.add_album([Item(title="Again", artist="Radiohead", album="OK Computer", path=b"/x.flac")])
+    body = client.get("/api/library/health").json()
+    assert body["albums"] == 2
+    assert body["healthy"] == 0
+    failed = {c["id"]: len(c["albums"]) for c in body["checks"]}
+    assert failed == {
+        "missing_files": 2,
+        "missing_tracks": 0,
+        "no_art": 2,
+        "unmatched": 2,
+        "duplicates": 2,
+    }

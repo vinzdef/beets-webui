@@ -10,6 +10,8 @@
 		type LibraryUpdatePreview,
 		type Page
 	} from '$lib/api';
+	import BulkEditDialog from '$lib/library/BulkEditDialog.svelte';
+	import HealthGauge from '$lib/library/HealthGauge.svelte';
 
 	// 'song' lists tracks instead of albums.
 	type Grouping = 'album' | 'artist' | 'song';
@@ -31,6 +33,13 @@
 	let previewError = $state<string | null>(null);
 	let updating = $state(false);
 	let updated = $state<string | null>(null);
+
+	// Picking albums or songs for a bulk edit; ids of whichever the view lists.
+	let selecting = $state(false);
+	let selected = $state<number[]>([]);
+	let bulkEditing = $state(false);
+	// Bumped after changes, so the health gauge checks again.
+	let healthVersion = $state(0);
 
 	function storedGrouping(): Grouping {
 		try {
@@ -56,8 +65,27 @@
 	// overwrite newer results.
 	let generation = 0;
 
+	function toggle(id: number) {
+		selected = selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id];
+	}
+
+	function stopSelecting() {
+		selecting = false;
+		selected = [];
+	}
+
+	async function bulkEdited(saved: boolean) {
+		bulkEditing = false;
+		if (!saved) return;
+		updated = `Saved ${plural(selected.length, grouping === 'song' ? 'song' : 'album')}.`;
+		stopSelecting();
+		healthVersion++;
+		await search();
+	}
+
 	async function search() {
 		const current = ++generation;
+		selected = [];
 		error = null;
 		try {
 			if (grouping === 'song') {
@@ -143,6 +171,7 @@
 					? `Removed ${plural(items, 'track')} and ${plural(albums, 'album')} whose files are gone.`
 					: 'Library is up to date.';
 			dialog?.close();
+			healthVersion++;
 			await search();
 		} catch (e) {
 			previewError = e instanceof Error ? e.message : String(e);
@@ -182,7 +211,36 @@
 	</div>
 	{#if shown}<span class="meta">{plural(shown.total, grouping === 'song' ? 'song' : 'album')}</span
 		>{/if}
+	<div class="selection">
+		{#if selecting}
+			<span class="meta">{selected.length} selected</span>
+			<button
+				type="button"
+				onclick={() =>
+					(selected =
+						(grouping === 'song' ? songs?.results : page?.results)?.map((r) => r.id) ?? [])}
+				>Select all shown</button
+			>
+			<button type="button" disabled={!selected.length} onclick={() => (bulkEditing = true)}
+				>Edit…</button
+			>
+			<button type="button" onclick={stopSelecting}>Done</button>
+		{:else}
+			<button type="button" onclick={() => (selecting = true)}>Select</button>
+		{/if}
+		{#key healthVersion}
+			<HealthGauge onupdate={openUpdate} />
+		{/key}
+	</div>
 </div>
+
+{#if bulkEditing}
+	<BulkEditDialog
+		kind={grouping === 'song' ? 'songs' : 'albums'}
+		ids={selected}
+		onclose={bulkEdited}
+	/>
+{/if}
 
 {#if updated}<p class="meta">{updated}</p>{/if}
 
@@ -193,6 +251,7 @@
 		<table class="songs">
 			<thead>
 				<tr>
+					{#if selecting}<th class="check"></th>{/if}
 					<th class="num">#</th>
 					<th>Title</th>
 					<th>Artist</th>
@@ -203,9 +262,19 @@
 			</thead>
 			<tbody>
 				{#each songs.results as song (song.id)}
-					<tr title={song.path ?? undefined}>
+					<tr title={song.path ?? undefined} class:selected={selected.includes(song.id)}>
+						{#if selecting}
+							<td class="check">
+								<input
+									type="checkbox"
+									checked={selected.includes(song.id)}
+									onchange={() => toggle(song.id)}
+									aria-label="Select {song.title}"
+								/>
+							</td>
+						{/if}
 						<td class="num">{song.track || ''}</td>
-						<td>{song.title}</td>
+						<td><a href="/songs/{song.id}">{song.title}</a></td>
 						<td>{song.artist}</td>
 						<td class="album">
 							{#if song.album_id}<a href="/albums/{song.album_id}">{song.album}</a
@@ -225,8 +294,25 @@
 			<ul class="grid">
 				{#each group.albums as album (album.id)}
 					<li>
-						<a href="/albums/{album.id}">
+						<a
+							href="/albums/{album.id}"
+							class:selected={selected.includes(album.id)}
+							onclick={(e) => {
+								if (!selecting) return;
+								e.preventDefault();
+								toggle(album.id);
+							}}
+						>
 							<div class="cover">
+								{#if selecting}
+									<input
+										class="pick"
+										type="checkbox"
+										tabindex="-1"
+										checked={selected.includes(album.id)}
+										aria-hidden="true"
+									/>
+								{/if}
 								<img
 									src={api.artUrl(album.id)}
 									alt=""
@@ -359,6 +445,7 @@
 		text-decoration: none;
 	}
 	.cover {
+		position: relative;
 		width: 100%;
 		aspect-ratio: 1;
 		border-radius: 4px;
@@ -405,6 +492,36 @@
 	}
 	.songs a {
 		color: inherit;
+		text-decoration: none;
+	}
+	.songs a:hover {
+		text-decoration: underline;
+	}
+	.songs .check {
+		width: 2rem;
+	}
+	.songs tr.selected {
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+	}
+	.selection {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-left: auto;
+	}
+	.pick {
+		position: absolute;
+		top: 0.4rem;
+		left: 0.4rem;
+		width: 1.2rem;
+		height: 1.2rem;
+		margin: 0;
+		pointer-events: none;
+	}
+	.grid a.selected .cover {
+		outline: 3px solid var(--accent);
+		outline-offset: 2px;
 	}
 	@media (max-width: 640px) {
 		.songs .album,

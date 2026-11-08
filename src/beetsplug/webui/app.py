@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from .imports import ImportManager
-from .routes import imports, library
+from .routes import art, imports, library, maintenance
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -27,6 +27,8 @@ def create_app(lib: Library) -> FastAPI:
     app.state.imports = ImportManager(lib)
 
     app.include_router(library.router, prefix="/api")
+    app.include_router(art.router, prefix="/api")
+    app.include_router(maintenance.router, prefix="/api")
     app.include_router(imports.router, prefix="/api")
 
     @app.get("/api/health")

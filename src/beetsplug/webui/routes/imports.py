@@ -78,8 +78,10 @@ def list_inboxes():
 
 class StartImport(BaseModel):
     paths: list[str] = []
-    # Re-import (and so re-match) an album already in the library instead of inbox paths.
+    # Re-import (and so re-match) an album or a single track already in the library, instead of
+    # inbox paths.
     album_id: int | None = None
+    item_id: int | None = None
     # Unset options keep whatever the beets config says.
     # auto: apply strong matches unasked; manual: only perfect ones; timid: ask about all.
     mode: Literal["auto", "manual", "timid"] | None = None
@@ -96,11 +98,20 @@ def start_import(body: StartImport, manager: Manager):
             raise HTTPException(404, "album not found")
         paths = [f"{album.albumartist} – {album.album}"]
         query = f"id:{album.id}"
+    elif body.item_id is not None:
+        item = manager.lib.get_item(body.item_id)
+        if item is None:
+            raise HTTPException(404, "track not found")
+        if item.album_id is not None:
+            raise HTTPException(400, "This track is on an album: re-import the album instead.")
+        paths = [f"{item.artist} – {item.title}"]
+        query = f"id:{item.id}"
+        body.singletons = True
     elif body.paths:
         paths = [str(resolve_in_inbox(p)) for p in body.paths]
     else:
         raise HTTPException(400, "no paths given")
-    options = body.model_dump(exclude={"paths", "album_id"}, exclude_none=True)
+    options = body.model_dump(exclude={"paths", "album_id", "item_id"}, exclude_none=True)
     try:
         job = manager.start(paths, options, query)
     except ImportBusyError:

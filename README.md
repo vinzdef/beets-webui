@@ -190,7 +190,9 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 
 - [x] Browse/search albums and items using beets query syntax
 - [x] Edit an album's metadata from its page, mirroring `beet modify` (`PATCH /api/albums/{id}`)
-- [ ] Bulk edits over a query, and singleton tracks
+- [x] Song pages: edit a track (and re-import a single track); bulk edits on selected albums or songs
+- [x] Album art: fetch (fetchart), upload, save a folder image or embedded art as the art file, embed
+- [x] Library health: missing files and tracks, no cover, unmatched albums, duplicates
 - [x] Re-import an album already in the library to match it again (`beet import -L`)
 - [x] Installable as a PWA
 - [x] Imports from named inbox folders, with live progress

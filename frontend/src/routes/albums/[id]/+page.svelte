@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, imports, type AlbumDetail, type AlbumEdit, type Item } from '$lib/api';
+	import {
+		api,
+		fieldText as text,
+		imports,
+		type AlbumDetail,
+		type AlbumEdit,
+		type ArtSource,
+		type Item
+	} from '$lib/api';
 
 	const albumFields = [
 		{ key: 'album', label: 'Album' },
@@ -21,24 +29,28 @@
 	// The form's values, as strings keyed by field (and by track id for tracks).
 	let albumForm = $state<Record<string, string>>({});
 	let itemForms = $state<Record<number, Record<string, string>>>({});
+	let notice = $state<string | null>(null);
+	// Bumped when the art changes, so the browser doesn't show the cached image.
+	let artVersion = $state(0);
+	let fileInput = $state<HTMLInputElement>();
+
+	const artSources: Record<ArtSource, string> = {
+		file: "Cover from beets' art file.",
+		folder: "Cover from an image in the album's folder, which beets doesn't track yet.",
+		embedded: 'Cover embedded in the files; beets has no art file for it yet.'
+	};
 
 	$effect(() => {
 		const id = Number(page.params.id);
 		album = null;
 		error = null;
+		notice = null;
 		editing = false;
 		api.album(id).then(
 			(a) => (album = a),
 			(e) => (error = e instanceof Error ? e.message : String(e))
 		);
 	});
-
-	/** A field as the text beets would parse back: lists joined by "; ", zero years blank. */
-	function text(value: unknown): string {
-		if (Array.isArray(value)) return value.join('; ');
-		if (value == null || value === 0) return '';
-		return String(value);
-	}
 
 	function startEditing() {
 		if (!album) return;
@@ -101,6 +113,30 @@
 		}
 	}
 
+	/** Run an art action, then reload the album to pick up where its art now comes from. */
+	async function artAction(action: () => Promise<unknown>, done: string) {
+		busy = true;
+		error = null;
+		notice = null;
+		try {
+			await action();
+			album = await api.album(album!.id);
+			artVersion = Date.now();
+			notice = done;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	function upload(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (file) artAction(() => api.uploadArt(album!.id, file), 'Uploaded the cover.');
+	}
+
 	function duration(seconds: number) {
 		const s = Math.round(seconds);
 		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -115,7 +151,13 @@
 {#if album}
 	<header>
 		<div class="cover">
-			<img src={api.artUrl(album.id)} alt="" onerror={(e) => e.currentTarget.remove()} />
+			{#key artVersion}
+				<img
+					src={api.artUrl(album.id, artVersion)}
+					alt=""
+					onerror={(e) => e.currentTarget.remove()}
+				/>
+			{/key}
 		</div>
 		<div class="heading">
 			<h1>{album.album}</h1>
@@ -133,11 +175,47 @@
 						>Re-import…</button
 					>
 				</div>
+				<div class="buttons art">
+					<button
+						disabled={busy}
+						title="Look for a cover with the fetchart plugin's sources, replacing the current one"
+						onclick={() => artAction(() => api.fetchArt(album!.id), 'Fetched a new cover.')}
+						>Fetch cover</button
+					>
+					<button disabled={busy} onclick={() => fileInput?.click()}>Upload cover…</button>
+					<input
+						bind:this={fileInput}
+						type="file"
+						accept="image/jpeg,image/png,image/webp"
+						hidden
+						onchange={upload}
+					/>
+					{#if album.art_source === 'folder' || album.art_source === 'embedded'}
+						<button
+							disabled={busy}
+							title="Make it beets' art file for this album, so beets and other players use it"
+							onclick={() =>
+								artAction(() => api.saveArt(album!.id), 'Saved the cover as an art file.')}
+							>Save as art file</button
+						>
+					{/if}
+					{#if album.art_source === 'file'}
+						<button
+							disabled={busy}
+							title="Write the cover into every track's tags, for players that only read embedded art"
+							onclick={() =>
+								artAction(() => api.embedArt(album!.id), 'Embedded the cover in every track.')}
+							>Embed in files</button
+						>
+					{/if}
+				</div>
+				<p class="meta">{album.art_source ? artSources[album.art_source] : 'No cover yet.'}</p>
 			{/if}
 		</div>
 	</header>
 
 	{#if error}<p class="error">{error}</p>{/if}
+	{#if notice}<p class="notice">{notice}</p>{/if}
 
 	{#if editing}
 		<form
@@ -192,7 +270,7 @@
 				{#each album.items as item (item.id)}
 					<tr>
 						<td class="num">{trackNumber(item)}</td>
-						<td>{item.title}</td>
+						<td><a href="/songs/{item.id}">{item.title}</a></td>
 						<td>{item.artist}</td>
 						<td class="num">{duration(item.length)}</td>
 					</tr>
@@ -299,5 +377,21 @@
 	}
 	.error {
 		color: crimson;
+	}
+	.notice {
+		color: var(--ok);
+	}
+	td a {
+		color: inherit;
+		text-decoration: none;
+	}
+	td a:hover {
+		text-decoration: underline;
+	}
+	.buttons.art {
+		margin-top: 0.5rem;
+	}
+	.buttons.art + .meta {
+		margin-top: 0.4rem;
 	}
 </style>

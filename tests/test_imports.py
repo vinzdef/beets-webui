@@ -1,3 +1,4 @@
+import os
 import time
 from pathlib import Path
 
@@ -397,3 +398,97 @@ def test_edit_album_rejects_unknown_fields(client, lib, album):
     assert res.status_code == 400
     res = client.patch(f"/api/albums/{imported.id}", json={"items": {"999": {"title": "x"}}})
     assert res.status_code == 400
+
+
+def imported_album(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+    assert finished(client)["status"] == "done"
+    (imported,) = lib.albums()
+    return imported
+
+
+# Enough of a PNG for mediafile to recognise it.
+PNG = b"\x89PNG\r\n\x1a\n" + bytes(64)
+
+
+def test_single_track_edit_and_reimport(client, lib, tmp_path):
+    track = make_album(tmp_path / "inbox" / "Loose", tracks=1) / "01.mp3"
+    client.post("/api/imports", json={"paths": [str(track)], "singletons": True}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+    assert finished(client)["status"] == "done"
+    (item,) = lib.items()
+    assert item.album_id is None
+
+    res = client.patch(f"/api/items/{item.id}", json={"title": "New Title", "year": "1999"})
+    assert res.status_code == 200, res.json()
+    assert res.json()["title"] == "New Title"
+    tags = MediaFile(res.json()["path"])
+    assert (tags.title, tags.year) == ("New Title", 1999)
+
+    res = client.post("/api/imports", json={"item_id": item.id, "mode": "timid"})
+    assert res.status_code == 201, res.json()
+    assert question(client)["task"]["kind"] == "track"
+
+
+def test_album_track_cannot_take_album_fields(client, lib, album):
+    imported = imported_album(client, lib, album)
+    item = imported.items().get()
+    assert client.patch(f"/api/items/{item.id}", json={"year": "1999"}).status_code == 400
+    assert client.post("/api/imports", json={"item_id": item.id}).status_code == 400
+
+
+def test_bulk_item_edit_reaches_album_when_all_tracks_agree(client, lib, album):
+    imported = imported_album(client, lib, album)
+    first, second = sorted(imported.items(), key=lambda i: i.track)
+
+    res = client.patch("/api/items", json={"ids": [first.id], "fields": {"genres": "Jazz"}})
+    assert res.json() == {"updated": 1}
+    assert lib.get_album(imported.id).genres != ["Jazz"]
+
+    client.patch("/api/items", json={"ids": [first.id, second.id], "fields": {"genres": "Jazz"}})
+    assert lib.get_album(imported.id).genres == ["Jazz"]
+    assert MediaFile(lib.get_item(second.id).path).genres == ["Jazz"]
+
+
+def test_bulk_album_edit(client, lib, album):
+    imported = imported_album(client, lib, album)
+    res = client.patch(
+        "/api/albums", json={"ids": [imported.id], "fields": {"label": "Parlophone"}}
+    )
+    assert res.json() == {"updated": 1}
+    assert {MediaFile(i.path).label for i in lib.get_album(imported.id).items()} == {"Parlophone"}
+    assert (
+        client.patch(
+            "/api/albums", json={"ids": [imported.id], "fields": {"path": "x"}}
+        ).status_code
+        == 400
+    )
+
+
+def test_upload_embed_and_save_art(client, lib, album):
+    imported = imported_album(client, lib, album)
+    assert client.get(f"/api/albums/{imported.id}").json()["art_source"] is None
+
+    res = client.put(f"/api/albums/{imported.id}/art", content=PNG)
+    assert res.status_code == 200, res.json()
+    assert client.get(f"/api/albums/{imported.id}/art").content == PNG
+
+    assert client.post(f"/api/albums/{imported.id}/art/embed").status_code == 200
+    assert all(MediaFile(i.path).art == PNG for i in imported.items())
+
+    # With only the embedded copy left, saving turns it back into an art file.
+    imported.load()
+    os.remove(imported.artpath)
+    imported.artpath = None
+    imported.store()
+    assert client.get(f"/api/albums/{imported.id}").json()["art_source"] == "embedded"
+    assert client.post(f"/api/albums/{imported.id}/art/save").status_code == 200
+    assert client.get(f"/api/albums/{imported.id}").json()["art_source"] == "file"
+
+
+def test_art_rejects_non_images_and_needs_fetchart(client, lib, album):
+    imported = imported_album(client, lib, album)
+    assert client.put(f"/api/albums/{imported.id}/art", content=b"not an image").status_code == 400
+    assert client.post(f"/api/albums/{imported.id}/art/embed").status_code == 400
+    assert client.post(f"/api/albums/{imported.id}/art/fetch").status_code == 400

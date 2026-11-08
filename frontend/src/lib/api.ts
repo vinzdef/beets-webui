@@ -18,7 +18,10 @@ export interface Album {
 	[field: string]: unknown;
 }
 
-export type AlbumDetail = Album & { items: Item[] };
+/** Where an album's art comes from: beets' art file, an image in its folder, or a track's tags. */
+export type ArtSource = 'file' | 'folder' | 'embedded';
+
+export type AlbumDetail = Album & { items: Item[]; art_source: ArtSource | null };
 
 export interface AlbumEdit {
 	album?: Record<string, string>;
@@ -51,7 +54,22 @@ export const api = {
 	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
 	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
-	artUrl: (id: number) => `/api/albums/${id}/art`,
+	item: (id: number) => get<Item>(`/items/${id}`),
+	editItem: (id: number, fields: Record<string, string>) =>
+		post<Item>(`/items/${id}`, fields, 'PATCH'),
+	/** Set the same fields on several albums or tracks. */
+	editAlbums: (ids: number[], fields: Record<string, string>) =>
+		post<{ updated: number }>('/albums', { ids, fields }, 'PATCH'),
+	editItems: (ids: number[], fields: Record<string, string>) =>
+		post<{ updated: number }>('/items', { ids, fields }, 'PATCH'),
+	/** `version` busts the browser's cache after the art changed. */
+	artUrl: (id: number, version = 0) => `/api/albums/${id}/art${version ? `?v=${version}` : ''}`,
+	itemArtUrl: (id: number) => `/api/items/${id}/art`,
+	fetchArt: (id: number) => post(`/albums/${id}/art/fetch`),
+	saveArt: (id: number) => post(`/albums/${id}/art/save`),
+	embedArt: (id: number) => post(`/albums/${id}/art/embed`),
+	uploadArt: (id: number, image: Blob) => send(`/albums/${id}/art`, 'PUT', image),
+	health: () => get<LibraryHealth>('/library/health'),
 	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
 	previewUpdate: () => get<LibraryUpdatePreview>('/library/update'),
 	updateLibrary: () => post<LibraryUpdate>('/library/update')
@@ -61,6 +79,17 @@ export interface LibraryUpdatePreview {
 	missing: Pick<Item, 'id' | 'artist' | 'album' | 'title' | 'path'>[];
 	/** Whether files whose tags changed get moved to match the path format. */
 	moves_files: boolean;
+}
+
+export interface LibraryHealth {
+	albums: number;
+	healthy: number;
+	checks: {
+		id: string;
+		label: string;
+		description: string;
+		albums: Pick<Album, 'id' | 'album' | 'albumartist' | 'year'>[];
+	}[];
 }
 
 export interface LibraryUpdate {
@@ -205,12 +234,17 @@ export type AnswerBody =
 	| { type: 'duplicate'; action: string }
 	| { type: 'resume'; resume: boolean };
 
-async function post<T>(path: string, body: unknown = {}, method = 'POST'): Promise<T> {
-	const res = await fetch(`/api${path}`, {
-		method,
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
+function post<T>(path: string, body: unknown = {}, method = 'POST'): Promise<T> {
+	return send(path, method, JSON.stringify(body), { 'Content-Type': 'application/json' });
+}
+
+async function send<T>(
+	path: string,
+	method: string,
+	body: BodyInit,
+	headers: HeadersInit = {}
+): Promise<T> {
+	const res = await fetch(`/api${path}`, { method, headers, body });
 	if (!res.ok) {
 		const detail = await res.json().catch(() => null);
 		throw new Error(detail?.detail ?? `${res.status} ${res.statusText}`);
@@ -225,6 +259,9 @@ export const imports = {
 	/** Re-import an album already in the library, to match it again without copying its files. */
 	reimport: (albumId: number, options: StartOptions) =>
 		post<ImportJob>('/imports', { album_id: albumId, ...options }),
+	/** The same for a single track (not one on an album). */
+	reimportItem: (itemId: number, options: StartOptions) =>
+		post<ImportJob>('/imports', { item_id: itemId, ...options }),
 	answer: (question: number, body: AnswerBody) =>
 		post('/imports/current/answer', { question, ...body }),
 	abort: () => post('/imports/current/abort'),
@@ -246,4 +283,11 @@ export function formatLength(seconds: number | null | undefined): string {
 	if (seconds == null) return '';
 	const s = Math.round(seconds);
 	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** A field as text beets parses back: lists joined by "; ", zeros (unset numbers) blank. */
+export function fieldText(value: unknown): string {
+	if (Array.isArray(value)) return value.join('; ');
+	if (value == null || value === 0) return '';
+	return String(value);
 }
