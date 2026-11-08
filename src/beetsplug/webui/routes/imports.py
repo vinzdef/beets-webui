@@ -77,7 +77,9 @@ def list_inboxes():
 
 
 class StartImport(BaseModel):
-    paths: list[str]
+    paths: list[str] = []
+    # Re-import (and so re-match) an album already in the library instead of inbox paths.
+    album_id: int | None = None
     # Unset options keep whatever the beets config says.
     # auto: apply strong matches unasked; manual: only perfect ones; timid: ask about all.
     mode: Literal["auto", "manual", "timid"] | None = None
@@ -87,12 +89,20 @@ class StartImport(BaseModel):
 
 @router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)
 def start_import(body: StartImport, manager: Manager):
-    if not body.paths:
+    query = None
+    if body.album_id is not None:
+        album = manager.lib.get_album(body.album_id)
+        if album is None:
+            raise HTTPException(404, "album not found")
+        paths = [f"{album.albumartist} – {album.album}"]
+        query = f"id:{album.id}"
+    elif body.paths:
+        paths = [str(resolve_in_inbox(p)) for p in body.paths]
+    else:
         raise HTTPException(400, "no paths given")
-    paths = [str(resolve_in_inbox(p)) for p in body.paths]
-    options = body.model_dump(exclude={"paths"}, exclude_none=True)
+    options = body.model_dump(exclude={"paths", "album_id"}, exclude_none=True)
     try:
-        job = manager.start(paths, options)
+        job = manager.start(paths, options, query)
     except ImportBusyError:
         raise HTTPException(409, "an import is already running") from None
     return job.snapshot()

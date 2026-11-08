@@ -75,6 +75,11 @@
 		});
 	});
 
+	function jobLabel(j: ImportJob) {
+		if (j.reimport) return `Re-importing ${j.paths.join(', ')}`;
+		return j.paths.map((p) => p.split('/').pop()).join(', ');
+	}
+
 	function isActive(j: ImportJob) {
 		return j.status === 'running' || j.status === 'waiting';
 	}
@@ -138,7 +143,7 @@
 {#if job && active}
 	<div class="status">
 		<span class="badge {job.status}">{statusText[job.status]}</span>
-		<span class="paths">{job.paths.map((p) => p.split('/').pop()).join(', ')}</span>
+		<span class="paths">{jobLabel(job)}</span>
 		<button class="danger" disabled={busy} onclick={() => run(imports.abort)}>Abort</button>
 	</div>
 
@@ -155,7 +160,7 @@
 	{#if job}
 		<div class="status">
 			<span class="badge {job.status}">{statusText[job.status]}</span>
-			<span class="paths">{job.paths.map((p) => p.split('/').pop()).join(', ')}</span>
+			<span class="paths">{jobLabel(job)}</span>
 		</div>
 		{#if job.error}<p class="error">{job.error}</p>{/if}
 	{/if}

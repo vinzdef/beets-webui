@@ -13,6 +13,7 @@ from beets.library import Library
 from beets.ui.commands.update import update_items
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
 from .imports import require_same_origin
 
@@ -100,6 +101,46 @@ def get_album(request: Request, album_id: int):
     data = serialize(album)
     data["items"] = [serialize(i) for i in album.items()]
     return data
+
+
+# Fields the album page can edit. Album fields are copied to the album's tracks, as in beets.
+ALBUM_EDIT_FIELDS = {"album", "albumartist", "year", "genres", "label", "catalognum", "country"}
+ITEM_EDIT_FIELDS = {"title", "artist", "track", "disc"}
+
+
+class AlbumEdit(BaseModel):
+    # Values are strings, parsed by each field's beets type as `beet modify` does.
+    album: dict[str, str] = {}
+    items: dict[int, dict[str, str]] = {}
+
+
+@router.patch("/albums/{album_id}", dependencies=[Depends(require_same_origin)])
+def edit_album(request: Request, album_id: int, body: AlbumEdit):
+    """Like `beet modify`: store the changes, write them to the files and move files to match."""
+    album = get_lib(request).get_album(album_id)
+    if album is None:
+        raise HTTPException(404, "album not found")
+    if unknown := set(body.album) - ALBUM_EDIT_FIELDS:
+        raise HTTPException(400, f"can't edit album fields: {', '.join(sorted(unknown))}")
+    items = {item.id: item for item in album.items()}
+    for item_id, fields in body.items.items():
+        if item_id not in items:
+            raise HTTPException(400, f"track {item_id} isn't on this album")
+        if unknown := set(fields) - ITEM_EDIT_FIELDS:
+            raise HTTPException(400, f"can't edit track fields: {', '.join(sorted(unknown))}")
+
+    write, move = ui.should_write(), ui.should_move()
+    for key, value in body.album.items():
+        album.set_parse(key, value)
+    album.store(inherit=True)
+    for item in album.items():
+        # Album fields reach every track; otherwise only the edited tracks need writing.
+        if not body.album and item.id not in body.items:
+            continue
+        for key, value in body.items.get(item.id, {}).items():
+            item.set_parse(key, value)
+        item.try_sync(write, move)
+    return get_album(request, album_id)
 
 
 @router.get("/albums/{album_id}/art")

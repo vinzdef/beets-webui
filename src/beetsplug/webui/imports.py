@@ -46,8 +46,11 @@ class ImportJob:
         paths: list[str],
         options: dict[str, Any],
         on_change: Callable[[], None],
+        query: str | None = None,
     ):
         self.paths = paths
+        # A library query re-imports albums already in the library (`beet import -L`), in place.
+        self.query = query
         self.options = options
         self.status = "running"  # running | waiting | done | aborted | failed
         self.error: str | None = None
@@ -81,6 +84,7 @@ class ImportJob:
             return {
                 "status": self.status,
                 "paths": self.paths,
+                "reimport": self.query is not None,
                 "options": self.options,
                 "error": self.error,
                 "started": self.started,
@@ -145,13 +149,16 @@ class ImportJob:
         saved_sources = list(config.sources)
         _running_job = self
         try:
-            config.set(config_overrides(self.options))
-            session = WebImportSession(
-                self, self._lib, _import_loghandler(), [p.encode() for p in self.paths]
-            )
+            overrides = config_overrides(self.options)
+            if self.query is not None:
+                overrides["import"]["library"] = True
+            config.set(overrides)
+            paths = None if self.query is not None else [p.encode() for p in self.paths]
+            session = WebImportSession(self, self._lib, _import_loghandler(), paths, self.query)
             session.logger.addHandler(handler)
             beets_log.addHandler(handler)
-            self.event("started", f"Importing {', '.join(self.paths)}")
+            verb = "Re-importing" if self.query is not None else "Importing"
+            self.event("started", f"{verb} {', '.join(self.paths)}")
             session.run()
             plugins.send("import", lib=self._lib, paths=session.paths)
             status = "aborted" if self._aborted else "done"
@@ -212,11 +219,13 @@ class ImportManager:
         self._cond = threading.Condition()
         _install_listeners()
 
-    def start(self, paths: list[str], options: dict[str, Any]) -> ImportJob:
+    def start(
+        self, paths: list[str], options: dict[str, Any], query: str | None = None
+    ) -> ImportJob:
         with self._cond:
             if self.job is not None and self.job.active:
                 raise ImportBusyError()
-            self.job = ImportJob(self.lib, paths, options, self._changed)
+            self.job = ImportJob(self.lib, paths, options, self._changed, query)
         self.job.start()
         self._changed()
         return self.job

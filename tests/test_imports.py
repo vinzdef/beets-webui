@@ -338,3 +338,62 @@ def test_relative_inbox_paths_resolve_against_config_dir(client, config, tmp_pat
     config.set_file(config_file)
     inbox = client.get("/api/inboxes").json()["inboxes"][-1]
     assert inbox["path"] == str((tmp_path / "beets" / "relinbox").resolve())
+
+
+def test_reimport_rematches_album_in_place(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+    assert finished(client)["status"] == "done"
+    (imported,) = lib.albums()
+    paths = sorted(i.path for i in imported.items())
+
+    res = client.post("/api/imports", json={"album_id": imported.id, "mode": "timid"})
+    assert res.status_code == 201, res.json()
+    assert res.json()["reimport"] is True
+    q = question(client)
+    assert q["task"]["name"] == "Applied Album"
+    answer(client, q, type="apply", candidate=0)
+    assert finished(client)["status"] == "done"
+
+    (reimported,) = lib.albums()
+    assert sorted(i.path for i in reimported.items()) == paths
+
+
+def test_reimport_unknown_album(client):
+    assert client.post("/api/imports", json={"album_id": 999}).status_code == 404
+
+
+def test_edit_album_writes_tags_and_moves_files(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+    assert finished(client)["status"] == "done"
+    (imported,) = lib.albums()
+    first = min(imported.items(), key=lambda i: i.track)
+
+    res = client.patch(
+        f"/api/albums/{imported.id}",
+        json={
+            "album": {"album": "Edited Album", "year": "2001"},
+            "items": {first.id: {"title": "Edited"}},
+        },
+    )
+    assert res.status_code == 200, res.json()
+    body = res.json()
+    assert body["album"] == "Edited Album"
+    assert body["year"] == 2001
+    edited = next(i for i in body["items"] if i["id"] == first.id)
+    assert edited["title"] == "Edited"
+    assert "Edited Album" in edited["path"]
+    tags = MediaFile(edited["path"])
+    assert (tags.album, tags.title, tags.year) == ("Edited Album", "Edited", 2001)
+
+
+def test_edit_album_rejects_unknown_fields(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    answer(client, question(client), type="apply", candidate=0)
+    finished(client)
+    (imported,) = lib.albums()
+    res = client.patch(f"/api/albums/{imported.id}", json={"album": {"path": "/etc"}})
+    assert res.status_code == 400
+    res = client.patch(f"/api/albums/{imported.id}", json={"items": {"999": {"title": "x"}}})
+    assert res.status_code == 400

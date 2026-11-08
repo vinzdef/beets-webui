@@ -20,6 +20,13 @@ export interface Album {
 	[field: string]: unknown;
 }
 
+export type AlbumDetail = Album & { items: Item[] };
+
+export interface AlbumEdit {
+	album?: Record<string, string>;
+	items?: Record<number, Record<string, string>>;
+}
+
 export type AlbumOrder = 'default' | 'artist' | 'album' | 'path';
 
 export interface Page<T> {
@@ -42,7 +49,9 @@ async function get<T>(path: string, params: Record<string, string | number> = {}
 export const api = {
 	albums: (q = '', order: AlbumOrder = 'default', offset = 0, limit = 100) =>
 		get<Page<Album>>('/albums', { q, order, offset, limit }),
-	album: (id: number) => get<Album & { items: Item[] }>(`/albums/${id}`),
+	album: (id: number) => get<AlbumDetail>(`/albums/${id}`),
+	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
+	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
 	artUrl: (id: number) => `/api/albums/${id}/art`,
 	/** Like `beet update`: drops entries whose files are gone and re-reads changed tags. */
@@ -167,7 +176,9 @@ export interface LogEntry {
 
 export interface ImportJob {
 	status: 'running' | 'waiting' | 'done' | 'aborted' | 'failed';
+	/** Inbox paths, or for a re-import the album's name. */
 	paths: string[];
+	reimport: boolean;
 	options: Record<string, boolean>;
 	error: string | null;
 	started: number;
@@ -196,9 +207,9 @@ export type AnswerBody =
 	| { type: 'duplicate'; action: string }
 	| { type: 'resume'; resume: boolean };
 
-async function post<T>(path: string, body: unknown = {}): Promise<T> {
+async function post<T>(path: string, body: unknown = {}, method = 'POST'): Promise<T> {
 	const res = await fetch(`/api${path}`, {
-		method: 'POST',
+		method,
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
 	});
@@ -213,6 +224,9 @@ export const imports = {
 	inboxes: () => get<{ inboxes: Inbox[] }>('/inboxes'),
 	start: (paths: string[], options: StartOptions) =>
 		post<ImportJob>('/imports', { paths, ...options }),
+	/** Re-import an album already in the library, to match it again without copying its files. */
+	reimport: (albumId: number, options: StartOptions) =>
+		post<ImportJob>('/imports', { album_id: albumId, ...options }),
 	answer: (question: number, body: AnswerBody) =>
 		post('/imports/current/answer', { question, ...body }),
 	abort: () => post('/imports/current/abort'),
