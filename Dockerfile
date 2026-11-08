@@ -1,0 +1,26 @@
+# --- frontend build ---
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+RUN corepack enable
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
+
+# --- runtime ---
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock* README.md ./
+COPY src/ src/
+COPY --from=frontend /app/src/beetsplug/webui/static src/beetsplug/webui/static
+RUN uv pip install --system --no-cache .
+
+COPY docker/ /docker/
+ENV BEETSDIR=/config
+VOLUME ["/config", "/music"]
+EXPOSE 8338
+
+ENTRYPOINT ["/docker/entrypoint.sh"]
+CMD ["beet", "webui", "0.0.0.0"]

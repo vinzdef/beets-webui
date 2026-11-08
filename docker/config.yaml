@@ -1,0 +1,4 @@
+directory: /music
+library: /config/library.db
+
+plugins: webui
