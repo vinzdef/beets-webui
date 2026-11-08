@@ -12,10 +12,10 @@ It isn't on PyPI. Install the wheel from a [GitHub release](https://github.com/v
 into the same environment as beets:
 
 ```sh
-pip install https://github.com/vinzdef/beets-webui/releases/download/v2.14.5/beets_webui-2.14.5-py3-none-any.whl
+pip install https://github.com/vinzdef/beets-webui/releases/download/v2.14.6/beets_webui-2.14.6-py3-none-any.whl
 
 # if beets was installed with pipx:
-pipx inject beets https://github.com/vinzdef/beets-webui/releases/download/v2.14.5/beets_webui-2.14.5-py3-none-any.whl
+pipx inject beets https://github.com/vinzdef/beets-webui/releases/download/v2.14.6/beets_webui-2.14.6-py3-none-any.whl
 ```
 
 Pick the release matching your beets version: `2.14.N` works with beets 2.14 (see
