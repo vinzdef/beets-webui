@@ -8,8 +8,27 @@ It ships as a beets plugin, so it uses your existing config, library and plugins
 
 ## Usage
 
+It isn't on PyPI. Install the wheel from a [GitHub release](https://github.com/vinzdef/beets-webui/releases)
+into the same environment as beets:
+
 ```sh
-pip install beets-webui
+pip install https://github.com/vinzdef/beets-webui/releases/download/v2.14.0/beets_webui-2.14.0-py3-none-any.whl
+
+# if beets was installed with pipx:
+pipx inject beets https://github.com/vinzdef/beets-webui/releases/download/v2.14.0/beets_webui-2.14.0-py3-none-any.whl
+```
+
+Pick the release matching your beets version: `2.14.N` works with beets 2.14 (see
+[Versioning](#versioning)). It installs beets 2.14 if it isn't there already.
+
+`pip install git+https://github.com/vinzdef/beets-webui` also works, but installs without the web
+pages: the compiled frontend isn't in git, only in the release wheels. To install from a checkout
+instead, build the frontend first:
+
+```sh
+git clone https://github.com/vinzdef/beets-webui && cd beets-webui
+(cd frontend && pnpm install && pnpm build)
+pip install .
 ```
 
 Add it to your beets config (`beet config -e`):
@@ -108,9 +127,15 @@ To release, bump `version` in `pyproject.toml`, commit, and push a matching tag:
 git tag v2.14.1 && git push origin v2.14.1
 ```
 
-The Docker workflow refuses to publish if the tag, the version and the beets version disagree
-(`scripts/check_version.py`), installs the beets version locked in `uv.lock`, and publishes
-`ghcr.io/vinzdef/beets-webui` for amd64 and arm64.
+Two workflows run for the tag, and both refuse to publish if the tag, the version and the beets
+version disagree (`scripts/check_version.py`):
+
+- **Docker image** installs the beets version locked in `uv.lock` and publishes
+  `ghcr.io/vinzdef/beets-webui` for amd64 and arm64.
+- **Release** builds the wheel with the web UI inside and attaches it to a GitHub release. For a
+  tag pushed before this workflow existed, run it from the Actions tab with that tag.
+
+Update the install URLs in this README to the new version when releasing.
 
 ## Development
 

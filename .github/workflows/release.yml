@@ -1,0 +1,58 @@
+name: Release
+
+# Builds the wheel, with the compiled web UI inside, and attaches it to a GitHub Release, so it can
+# be installed with `pip install <release asset URL>`. Runs for version tags; to (re)build the
+# release for an existing tag, run it by hand from the Actions tab with that tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build a release for, e.g. v2.14.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  wheel:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check version against tag and beets
+        run: python3 scripts/check_version.py "$TAG"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Build the web UI
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the wheel
+        run: uv build --wheel
+
+      - name: Check the web UI is in the wheel
+        run: unzip -l dist/*.whl | grep -q 'beetsplug/webui/static/index.html'
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.whl --clobber
+          else
+            gh release create "$TAG" dist/*.whl --title "$TAG" --generate-notes
+          fi
