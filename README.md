@@ -75,9 +75,8 @@ docker/                  entrypoint + default config
 - [ ] Edit metadata: `PATCH /api/items/{id}` and `/api/albums/{id}`, then `item.try_sync(write, move)`
       to mirror `beet modify`, with bulk edits over a query
 - [ ] Imports: start `beet import` jobs on a path and stream their progress
-- [ ] Interactive imports. Plan: subclass `beets.importer.ImportSession` and implement
-      `choose_match` / `choose_item` / `resolve_duplicate` / `should_resume`. The session runs in
-      a worker thread. Each decision point publishes the task and its candidates (with distance
-      and penalties) over a WebSocket, then blocks on a queue until the browser replies. This
-      gives the same choices as the CLI: apply, skip, as-is, search by ID or name, and
-      merge/keep/remove duplicates.
+- [ ] Interactive imports with the same choices as the CLI; see
+      [docs/interactive-import.md](docs/interactive-import.md)
+- [ ] Security before any write endpoint: CSRF/Origin checks, Host validation, auth for `0.0.0.0`
+
+beets is pinned to 2.14.x because the importer API changes between minor releases.

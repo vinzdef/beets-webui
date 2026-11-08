@@ -5,7 +5,7 @@ description = "A web UI for the beets music library manager"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "beets>=2.0",
+    "beets>=2.14,<2.15",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
