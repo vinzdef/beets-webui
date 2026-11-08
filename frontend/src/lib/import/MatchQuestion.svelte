@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		formatLength,
+		formatSimilarity,
 		type AnswerBody,
 		type Candidate,
 		type ImportItem,
@@ -94,7 +95,7 @@
 	<div class="actions">
 		{#if question.candidates[0]}
 			<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: 0 })}>
-				Apply {question.candidates[0].similarity.toFixed(0)}% match
+				Apply {formatSimilarity(question.candidates[0])}% match
 			</button>
 		{/if}
 		{#each actions as choice (choice.short)}
@@ -134,7 +135,7 @@
 				{#each question.candidates as c (c.index)}
 					<li>
 						<button class:selected={c.index === selected} onclick={() => (selected = c.index)}>
-							<span class="score {c.strength}">{c.similarity.toFixed(1)}%</span>
+							<span class="score {c.strength}">{formatSimilarity(c)}%</span>
 							<span class="title">{c.artist} – {c.name}</span>
 							{#if meta(c)}<span class="meta">{meta(c)}</span>{/if}
 							{#if !isAlbum && c.album}<span class="meta">{c.album}</span>{/if}
@@ -214,7 +215,7 @@
 					{/if}
 					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
 					<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: selected })}>
-						Apply {candidate.similarity.toFixed(0)}% match
+						Apply {formatSimilarity(candidate)}% match
 					</button>
 				</div>
 			{/if}

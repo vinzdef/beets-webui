@@ -202,6 +202,12 @@ export const imports = {
 	}
 };
 
+/** Similarity to one decimal (99.88 → "99.9"); only an exact match shows "100.0". */
+export function formatSimilarity(candidate: { distance: number }): string {
+	const value = Math.round((1 - candidate.distance) * 1000) / 10;
+	return (candidate.distance > 0 && value >= 100 ? 99.9 : value).toFixed(1);
+}
+
 export function formatLength(seconds: number | null | undefined): string {
 	if (seconds == null) return '';
 	const s = Math.round(seconds);
