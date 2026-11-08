@@ -83,6 +83,13 @@ export const api = {
 	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
 	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
 	item: (id: number) => get<Item & { can_refresh: boolean }>(`/items/${id}`),
+	/** Like `beet remove -a`, with -d when `deleteFiles`: the album and its tracks go. */
+	deleteAlbum: (id: number, deleteFiles: boolean) =>
+		send<{ removed_items: number; deleted_files: boolean }>(
+			`/albums/${id}?delete_files=${deleteFiles}`,
+			'DELETE',
+			''
+		),
 	/** Like `beet mbsync`: fetch the matched release (or recording) again and apply it. */
 	refreshAlbum: (id: number) => post<AlbumDetail>(`/albums/${id}/refresh`),
 	refreshItem: (id: number) => post<Item & { can_refresh: boolean }>(`/items/${id}/refresh`),

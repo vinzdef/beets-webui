@@ -942,3 +942,19 @@ def test_shrink_reports_covers_still_over_the_size(client, lib, tmp_path, monkey
     client.post("/api/library/embedded-art", json={"max_width": 1000, "quality": 85, "max_kb": 10})
     state = wait_for_job(client, "/api/library/embedded-art")
     assert (state["rewritten"], state["over_size"]) == (1, 1)
+
+
+@pytest.mark.parametrize("delete_files", [True, False])
+def test_delete_album(client, lib, album, delete_files):
+    imported = imported_album(client, lib, album)
+    client.put(f"/api/albums/{imported.id}/art", content=PNG).raise_for_status()
+    imported.load()
+    paths = [i.path for i in imported.items()] + [imported.artpath]
+    folder = os.path.dirname(paths[0])
+
+    res = client.delete(f"/api/albums/{imported.id}", params={"delete_files": delete_files})
+    assert res.json() == {"removed_items": 2, "deleted_files": delete_files}
+    assert list(lib.albums()) == [] and list(lib.items()) == []
+    assert all(os.path.exists(p) != delete_files for p in paths)
+    assert os.path.isdir(folder) != delete_files  # an emptied folder goes too
+    assert client.delete(f"/api/albums/{imported.id}").status_code == 404

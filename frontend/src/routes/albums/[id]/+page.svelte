@@ -118,6 +118,29 @@
 		}
 	}
 
+	let deleteDialog = $state<HTMLDialogElement>();
+	let deleteFiles = $state(true);
+
+	// Where the album's files live, to show what deleting removes.
+	const folder = $derived(
+		album?.items[0]?.path ? album.items[0].path.slice(0, album.items[0].path.lastIndexOf('/')) : ''
+	);
+
+	async function deleteAlbum() {
+		busy = true;
+		error = null;
+		try {
+			await api.deleteAlbum(album!.id, deleteFiles);
+			deleteDialog?.close();
+			await goto('/');
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+			deleteDialog?.close();
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function reimport() {
 		busy = true;
 		error = null;
@@ -203,6 +226,14 @@
 							>Refresh from MusicBrainz</button
 						>
 					{/if}
+					<button
+						class="danger"
+						disabled={busy}
+						onclick={() => {
+							deleteFiles = true;
+							deleteDialog?.showModal();
+						}}>Delete…</button
+					>
 				</div>
 			{/if}
 			<!-- Cover changes save straight away, so they work while editing the fields too. -->
@@ -354,6 +385,34 @@
 	<p>Loading…</p>
 {/if}
 
+<dialog bind:this={deleteDialog} class="confirm">
+	{#if album}
+		<h2>Delete {album.album}?</h2>
+		<p>
+			Removes the album and its {album.items.length} track{album.items.length === 1 ? '' : 's'} from the
+			library.
+		</p>
+		<label>
+			<input type="checkbox" bind:checked={deleteFiles} />
+			Also delete the files from disk
+		</label>
+		{#if deleteFiles}
+			<p class="danger-note">
+				The audio files and the cover in <code>{folder}</code> are deleted, and the folder too if it's
+				left empty. This can't be undone.
+			</p>
+		{:else}
+			<p class="meta">The files stay where they are; you can import them again later.</p>
+		{/if}
+		<div class="buttons end">
+			<button type="button" onclick={() => deleteDialog?.close()}>Cancel</button>
+			<button type="button" class="primary danger-fill" disabled={busy} onclick={deleteAlbum}>
+				{busy ? 'Deleting…' : deleteFiles ? 'Delete album and files' : 'Remove from library'}
+			</button>
+		</div>
+	{/if}
+</dialog>
+
 <style>
 	header {
 		display: flex;
@@ -450,6 +509,39 @@
 	}
 	.notice {
 		color: var(--ok);
+	}
+	dialog.confirm {
+		width: min(32rem, calc(100vw - 2rem));
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		padding: 1.25rem;
+		color: inherit;
+		background: Canvas;
+	}
+	dialog.confirm::backdrop {
+		background: rgb(0 0 0 / 0.4);
+	}
+	dialog.confirm h2 {
+		margin-top: 0;
+		font-size: 1.1em;
+		word-break: break-word;
+	}
+	dialog.confirm label {
+		display: flex;
+		gap: 0.4rem;
+		align-items: center;
+	}
+	.danger-note {
+		color: var(--bad);
+		word-break: break-word;
+	}
+	.buttons.end {
+		justify-content: flex-end;
+	}
+	button.danger-fill {
+		background: var(--bad);
+		border-color: var(--bad);
+		color: white;
 	}
 	tr.disc th {
 		text-align: left;

@@ -69,6 +69,22 @@ def get_album(request: Request, album_id: int):
     return data
 
 
+@router.delete("/albums/{album_id}", dependencies=[Depends(require_same_origin)])
+def delete_album(
+    request: Request,
+    album_id: int,
+    delete_files: bool = Query(True, description="also delete its files and cover from disk"),
+):
+    """Like `beet remove -a` (with -d to delete the files): remove an album and its tracks.
+    Deleting also removes the folders it leaves empty."""
+    album = get_lib(request).get_album(album_id)
+    if album is None:
+        raise HTTPException(404, "album not found")
+    tracks = len(album.items())
+    album.remove(delete=delete_files, with_items=True)
+    return {"removed_items": tracks, "deleted_files": delete_files}
+
+
 @router.get("/items")
 def list_items(
     request: Request,

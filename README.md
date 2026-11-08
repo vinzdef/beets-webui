@@ -196,6 +196,7 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 - [x] Move "feat." from track artists into titles, after approving each change (with `ftintitle`)
 - [x] Library health: missing files and tracks, no cover, unmatched albums, duplicates
 - [x] Re-import an album already in the library to match it again (`beet import -L`)
+- [x] Delete an album, with or without its files (`beet remove -a [-d]`), after confirming
 - [x] Installable as a PWA
 - [x] Imports from named inbox folders, with live progress
 - [x] Interactive matching with the CLI's choices: apply a candidate, skip, as-is, as tracks, group
