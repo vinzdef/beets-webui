@@ -87,6 +87,10 @@ class StartImport(BaseModel):
     mode: Literal["auto", "manual", "timid"] | None = None
     singletons: bool | None = None
     group_albums: bool | None = None
+    # Import files an album match has no track for (bonus tracks) with the album, instead of
+    # leaving them out as beets does. Applies to matches taken without asking; each answer can
+    # say otherwise.
+    keep_unmatched: bool | None = None
 
 
 @router.post("/imports", dependencies=[Depends(require_same_origin)], status_code=201)
@@ -167,6 +171,7 @@ class Answer(BaseModel):
     ids: str = ""
     action: str | None = None
     resume: bool | None = None
+    keep_unmatched: bool | None = None
 
 
 @router.post("/imports/current/answer", dependencies=[Depends(require_same_origin)])
@@ -199,7 +204,11 @@ def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
         if body.type == "apply":
             if body.candidate is None or not 0 <= body.candidate < len(question["candidates"]):
                 raise HTTPException(400, "invalid candidate")
-            return {"type": "apply", "candidate": body.candidate}
+            return {
+                "type": "apply",
+                "candidate": body.candidate,
+                "keep_unmatched": body.keep_unmatched,
+            }
         if body.type == "choice":
             if body.short not in {c["short"] for c in question["choices"]}:
                 raise HTTPException(400, "invalid choice")

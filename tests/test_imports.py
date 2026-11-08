@@ -561,3 +561,39 @@ def test_log_keeps_every_import(client, lib, album, tmp_path):
 
     page = client.get("/api/imports/log", params={"offset": 1, "limit": 2}).json()
     assert page["entries"] == entries[1:3]
+
+
+@pytest.mark.parametrize("matcher", [AutotagStub.MISSING], indirect=True)
+def test_unmatched_files_are_left_out_and_said_so(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    assert len(q["candidates"][0]["extra_items"]) == 1
+    answer(client, q, type="apply", candidate=0)
+    state = finished(client)
+
+    assert len(lib.items()) == 1
+    assert any(
+        e.get("level") == "warning" and e["message"].startswith("Not imported")
+        for e in state["log"]
+    )
+
+
+@pytest.mark.parametrize("matcher", [AutotagStub.MISSING], indirect=True)
+def test_keep_unmatched_files_on_the_album(client, lib, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    extra = q["candidates"][0]["extra_items"][0]
+    answer(client, q, type="apply", candidate=0, keep_unmatched=True)
+    state = finished(client)
+    assert state["status"] == "done", state
+
+    (imported,) = lib.albums()
+    items = list(imported.items())
+    assert len(items) == 2
+    kept = next(i for i in items if i.title == extra["title"])
+    # The release's album fields, the file's own title.
+    assert kept.album == imported.album == "Applied Album"
+    assert kept.mb_albumid == imported.mb_albumid
+    tags = MediaFile(kept.path)
+    assert (tags.album, tags.title) == ("Applied Album", extra["title"])
+    assert any(e["message"].startswith("Keeping files") for e in state["log"])

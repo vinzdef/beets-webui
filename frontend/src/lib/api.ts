@@ -237,10 +237,12 @@ export interface StartOptions {
 	mode?: ImportMode;
 	singletons?: boolean;
 	group_albums?: boolean;
+	/** Import files an album match has no track for (bonus tracks) with the album. */
+	keep_unmatched?: boolean;
 }
 
 export type AnswerBody =
-	| { type: 'apply'; candidate: number }
+	| { type: 'apply'; candidate: number; keep_unmatched?: boolean }
 	| { type: 'choice'; short: string }
 	| { type: 'search'; artist: string; name: string }
 	| { type: 'id'; ids: string }

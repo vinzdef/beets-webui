@@ -9,8 +9,19 @@
 		type MatchQuestion
 	} from '$lib/api';
 
-	let { question, onanswer }: { question: MatchQuestion; onanswer: (body: AnswerBody) => void } =
-		$props();
+	let {
+		question,
+		keepUnmatched: keepDefault = false,
+		onanswer
+	}: {
+		question: MatchQuestion;
+		/** The import's choice for files the release doesn't have; each question can change it. */
+		keepUnmatched?: boolean;
+		onanswer: (body: AnswerBody) => void;
+	} = $props();
+
+	// svelte-ignore state_referenced_locally
+	let keepUnmatched = $state(keepDefault);
 
 	let selected = $state(0);
 	let searchArtist = $state('');
@@ -26,6 +37,15 @@
 	const task = $derived(question.task);
 	const candidate = $derived<Candidate | undefined>(question.candidates[selected]);
 	const isAlbum = $derived(task.kind === 'album');
+	const unmatchedCount = $derived(candidate?.extra_items?.length ?? 0);
+
+	function apply() {
+		onanswer({
+			type: 'apply',
+			candidate: selected,
+			...(unmatchedCount && { keep_unmatched: keepUnmatched })
+		});
+	}
 	// Abort lives in the page's status bar, so it isn't repeated here.
 	const actions = $derived(question.choices.filter((c) => c.short !== 'b'));
 
@@ -94,9 +114,16 @@
 
 	<div class="actions">
 		{#if candidate}
-			<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: selected })}>
+			<button class="primary" onclick={apply}>
 				Apply {formatSimilarity(candidate)}% match
 			</button>
+		{/if}
+		{#if unmatchedCount}
+			<label class="keep" title="beets imports only the files that match a track on the release">
+				<input type="checkbox" bind:checked={keepUnmatched} />
+				Keep {unmatchedCount === 1 ? 'the file' : `the ${unmatchedCount} files`} this release doesn't
+				have
+			</label>
 		{/if}
 		{#each actions as choice (choice.short)}
 			<button onclick={() => onanswer({ type: 'choice', short: choice.short })}>
@@ -191,7 +218,11 @@
 												{formatLength(track.length)}
 											</td>
 										{:else}
-											<td class="bad">no matching track</td>
+											<td class={keepUnmatched ? 'warn' : 'bad'}>
+												{keepUnmatched
+													? 'not on this release: kept with the album'
+													: "not on this release: won't be imported"}
+											</td>
 											<td class="num"></td>
 										{/if}
 									</tr>
@@ -341,6 +372,12 @@
 	}
 	.primary {
 		align-self: flex-start;
+	}
+	.keep {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.9em;
 	}
 	.actions,
 	.searches {

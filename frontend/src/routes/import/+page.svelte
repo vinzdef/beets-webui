@@ -13,6 +13,7 @@
 	let mode = $state<ImportMode>(loadMode());
 	let singletons = $state(false);
 	let groupAlbums = $state(false);
+	let keepUnmatched = $state(false);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
@@ -111,7 +112,8 @@
 		const options = {
 			mode,
 			...(singletons && { singletons: true }),
-			...(groupAlbums && { group_albums: true })
+			...(groupAlbums && { group_albums: true }),
+			...(keepUnmatched && { keep_unmatched: true })
 		};
 		run(() => imports.start(selected, options));
 	}
@@ -149,7 +151,11 @@
 
 	{#if job.question?.kind === 'match'}
 		{#key job.question.id}
-			<MatchQuestion question={job.question} onanswer={answer} />
+			<MatchQuestion
+				question={job.question}
+				keepUnmatched={!!job.options.keep_unmatched}
+				onanswer={answer}
+			/>
 		{/key}
 	{:else if job.question}
 		<OtherQuestion question={job.question} onanswer={answer} />
@@ -243,6 +249,17 @@
 						<small>
 							Normally one folder is one album. This splits a folder that mixes several albums into
 							one album per artist and album tag before matching.
+						</small>
+					</span>
+				</label>
+				<label>
+					<input type="checkbox" bind:checked={keepUnmatched} />
+					<span>
+						<strong>Keep files the release doesn't have</strong>
+						<small>
+							beets imports only the files that match a track on the chosen release, so bonus tracks
+							are left behind. This imports them with the album, taking its album details. You can
+							still choose per album when you're asked.
 						</small>
 					</span>
 				</label>

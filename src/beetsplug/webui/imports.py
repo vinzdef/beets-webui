@@ -363,13 +363,15 @@ class WebImportSession(ImportSession):
         if actions:
             return self._chose(task, actions[0], "a plugin")
 
+        # The import's choice for matches applied without asking; each answer can override it.
+        keep_unmatched = bool(self.job.options.get("keep_unmatched"))
         action = summary_judgment(task.rec)
         if action is Action.APPLY:
-            return self._chose(task, task.candidates[0], "quiet mode")
+            return self._chose(task, task.candidates[0], "quiet mode", keep_unmatched)
         if action is not None:
             return self._chose(task, action, "configuration")
         if task.rec == Recommendation.strong and not config["import"]["timid"]:
-            return self._chose(task, task.candidates[0], "strong match")
+            return self._chose(task, task.candidates[0], "strong match", keep_unmatched)
 
         while True:
             choices = self._choices(task)
@@ -387,7 +389,12 @@ class WebImportSession(ImportSession):
 
             kind = answer["type"]
             if kind == "apply":
-                return self._chose(task, task.candidates[answer["candidate"]])
+                keep = answer.get("keep_unmatched")
+                return self._chose(
+                    task,
+                    task.candidates[answer["candidate"]],
+                    keep_unmatched=keep_unmatched if keep is None else keep,
+                )
             if kind == "choice":
                 choice = next(c for c in choices if c.short == answer["short"])
                 result = choice.callback(self, task)
@@ -404,7 +411,12 @@ class WebImportSession(ImportSession):
             if isinstance(proposal, Proposal):
                 task.candidates, task.rec = proposal.candidates, proposal.recommendation
 
-    def _chose(self, task: ImportTask, choice, reason: str | None = None):
+    def _chose(
+        self, task: ImportTask, choice, reason: str | None = None, keep_unmatched: bool = False
+    ):
+        extras = choice.extra_items if isinstance(choice, AlbumMatch) else []
+        if extras and keep_unmatched:
+            _keep_unmatched(task, choice)
         if isinstance(choice, (AlbumMatch, TrackMatch)):
             what = f"Applying {choice.info.artist} - {choice.info.name}"
         else:
@@ -417,6 +429,17 @@ class WebImportSession(ImportSession):
             }.get(choice, choice.name.title())
         suffix = f" ({reason})" if reason else ""
         self.job.event("choice", f"{what}: {_task_label(task)}{suffix}", path=_task_path(task))
+        if extras:
+            names = ", ".join(os.path.basename(displayable_path(i.path)) for i in extras)
+            if keep_unmatched:
+                self.job.event("choice", f"Keeping files the release doesn't have: {names}")
+            else:
+                # beets imports only the matched files; say so rather than drop them quietly.
+                self.job.event(
+                    "log",
+                    f"Not imported, the release doesn't have them: {names}",
+                    level="warning",
+                )
         return choice
 
     def _choices(self, task: ImportTask) -> list[PromptChoice]:
@@ -447,6 +470,29 @@ class WebImportSession(ImportSession):
             taken.add(extra.short)
             choices.append(extra)
         return choices
+
+
+def _keep_unmatched(task: ImportTask, match: AlbumMatch) -> None:
+    """Import the files that match no track on the release (bonus tracks, say) with the album.
+
+    beets imports only an album match's matched files. Every later stage asks the task for
+    `imported_items()`, so the extra files join the album there; after the release's data is
+    applied they take its album fields (album, album artist, year, …) and keep their own titles
+    and track numbers.
+    """
+    extras = list(match.extra_items)
+    matched = match.items
+    task.imported_items = lambda: [*matched, *extras]
+    apply_metadata = task.apply_metadata
+
+    def apply_with_extras() -> None:
+        apply_metadata()
+        source = matched[0]
+        for item in extras:
+            for key in Album.item_keys:
+                item[key] = source.get(key)
+
+    task.apply_metadata = apply_with_extras
 
 
 def summary_judgment(rec: Recommendation) -> Action | None:
