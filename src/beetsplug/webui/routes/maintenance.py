@@ -89,14 +89,19 @@ HEALTH_CHECKS = {
 }
 
 
-def missing_tracks(items: list[Item]) -> bool:
-    """Whether a disc has fewer tracks than its track total says; untotalled discs are skipped."""
+def missing_track_numbers(items: list[Item]) -> dict[int, list[int]]:
+    """Per disc with fewer tracks than its track total, the numbers no track has (possibly none,
+    when tracks share a number). Discs without a total are skipped."""
     discs: dict[int, list[Item]] = defaultdict(list)
     for item in items:
         discs[item.disc or 1].append(item)
-    return any(
-        0 < len(tracks) < max(t.tracktotal or 0 for t in tracks) for tracks in discs.values()
-    )
+    missing = {}
+    for disc, tracks in sorted(discs.items()):
+        total = max(t.tracktotal or 0 for t in tracks)
+        if 0 < len(tracks) < total:
+            have = {t.track for t in tracks}
+            missing[disc] = [n for n in range(1, total + 1) if n not in have]
+    return missing
 
 
 def has_art(album: Album, items: list[Item]) -> bool:
@@ -110,44 +115,91 @@ def unmatched(album: Album) -> bool:
     return not (album.mb_albumid or album.discogs_albumid or album.get("data_source"))
 
 
-def duplicate_ids(albums: list[Album]) -> set[int]:
+def duplicates_of(albums: list[Album]) -> dict[int, set[int]]:
+    """For each album that has duplicates, the other albums: same release, or same name."""
     groups: dict[Any, list[int]] = defaultdict(list)
     for album in albums:
         if album.mb_albumid:
             groups["mb", album.mb_albumid].append(album.id)
         groups["name", album.albumartist.lower(), album.album.lower()].append(album.id)
-    return {album_id for ids in groups.values() if len(ids) > 1 for album_id in ids}
+    others: dict[int, set[int]] = defaultdict(set)
+    for ids in groups.values():
+        for album_id in ids:
+            others[album_id].update(i for i in ids if i != album_id)
+    return {album_id: ids for album_id, ids in others.items() if ids}
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def album_problems(
+    album: Album, items: list[Item], duplicates: dict[int, set[int]]
+) -> dict[str, str]:
+    """The checks an album fails, each with what exactly is wrong."""
+    problems = {}
+    if gone := [i for i in items if file_missing(i)]:
+        names = ", ".join(os.path.basename(util.displayable_path(i.path)) for i in gone[:5])
+        more = f" and {len(gone) - 5} more" if len(gone) > 5 else ""
+        problems["missing_files"] = f"{plural(len(gone), 'file')} gone: {names}{more}."
+    if missing := missing_track_numbers(items):
+        several_discs = len({i.disc or 1 for i in items}) > 1
+        parts = []
+        for disc, numbers in missing.items():
+            what = (
+                f"{'track' if len(numbers) == 1 else 'tracks'} {', '.join(map(str, numbers))}"
+                if numbers
+                else "tracks (some share a number)"
+            )
+            parts.append(f"{what} of disc {disc}" if several_discs else what)
+        problems["missing_tracks"] = f"Missing {'; '.join(parts)}, going by the track totals."
+    if not has_art(album, items):
+        problems["no_art"] = "No cover file, cover image in the folder or embedded art."
+    if unmatched(album):
+        problems["unmatched"] = "Not matched to a MusicBrainz or Discogs release."
+    if others := duplicates.get(album.id):
+        problems["duplicates"] = f"Same release or name as {plural(len(others), 'other album')}."
+    return problems
+
+
+def scan_library(lib: Library) -> tuple[list[Album], dict[int, dict[str, str]]]:
+    """Every album, and the problems of those that have any."""
+    albums = list(lib.albums())
+    tracks: dict[int, list[Item]] = defaultdict(list)
+    for item in lib.items("singleton:false"):
+        tracks[item.album_id].append(item)
+    duplicates = duplicates_of(albums)
+    problems = {}
+    for album in albums:
+        if found := album_problems(album, tracks.get(album.id, []), duplicates):
+            problems[album.id] = found
+    return albums, problems
+
+
+def problems_of(lib: Library, album: Album) -> list[dict[str, Any]]:
+    """One album's problems, for its page; duplicates name the other albums."""
+    duplicates = duplicates_of(list(lib.albums()))
+    found = album_problems(album, list(album.items()), duplicates)
+    out = []
+    for check, detail in found.items():
+        problem: dict[str, Any] = {"id": check, "label": HEALTH_CHECKS[check][0], "detail": detail}
+        if check == "duplicates":
+            problem["others"] = [
+                {"id": a.id, "album": a.album, "albumartist": a.albumartist, "year": a.year}
+                for a in (lib.get_album(i) for i in sorted(duplicates[album.id]))
+                if a is not None
+            ]
+        out.append(problem)
+    return out
 
 
 @router.get("/library/health")
 def library_health(request: Request):
     """Which albums have problems, by check, and the share of albums that have none."""
-    lib = get_lib(request)
-    albums = list(lib.albums())
-    tracks: dict[int, list[Item]] = defaultdict(list)
-    for item in lib.items("singleton:false"):
-        tracks[item.album_id].append(item)
-    duplicates = duplicate_ids(albums)
-
-    found: dict[str, list[Album]] = {check: [] for check in HEALTH_CHECKS}
-    healthy = 0
-    for album in albums:
-        items = tracks.get(album.id, [])
-        problems = {
-            "missing_files": any(file_missing(i) for i in items),
-            "missing_tracks": missing_tracks(items),
-            "no_art": not has_art(album, items),
-            "unmatched": unmatched(album),
-            "duplicates": album.id in duplicates,
-        }
-        for check, failed in problems.items():
-            if failed:
-                found[check].append(album)
-        healthy += not any(problems.values())
-
+    albums, problems = scan_library(get_lib(request))
     return {
         "albums": len(albums),
-        "healthy": healthy,
+        "healthy": len(albums) - len(problems),
         "checks": [
             {
                 "id": check,
@@ -155,7 +207,8 @@ def library_health(request: Request):
                 "description": description,
                 "albums": [
                     {"id": a.id, "album": a.album, "albumartist": a.albumartist, "year": a.year}
-                    for a in found[check]
+                    for a in albums
+                    if check in problems.get(a.id, {})
                 ],
             }
             for check, (label, description) in HEALTH_CHECKS.items()

@@ -1,16 +1,24 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type LibraryHealth } from '$lib/api';
+	import { api, type HealthCheck, type LibraryHealth } from '$lib/api';
 
 	let {
 		onupdate,
-		onfillcovers
+		onfillcovers,
+		onshow
 	}: {
 		/** Opens the Update library dialog, which fixes missing files. */
 		onupdate: () => void;
 		/** Opens the Fill missing covers dialog. */
 		onfillcovers: () => void;
+		/** Shows only the albums failing a check (or any) in the library. */
+		onshow: (check: HealthCheck | 'any') => void;
 	} = $props();
+
+	function show(check: HealthCheck | 'any') {
+		dialog?.close();
+		onshow(check);
+	}
 
 	let health = $state<LibraryHealth | null>(null);
 	let error = $state<string | null>(null);
@@ -65,6 +73,9 @@
 		<p>
 			<strong class={tone}>{score}%</strong> of albums have no problems ({health.healthy} of
 			{health.albums}).
+			{#if health.healthy < health.albums}
+				<button type="button" onclick={() => show('any')}>Show albums with problems</button>
+			{/if}
 		</p>
 		{#each health.checks as check (check.id)}
 			<details class:clean={!check.albums.length}>
@@ -73,6 +84,9 @@
 					<span class="label">{check.label}</span>
 				</summary>
 				<p class="meta">{check.description}</p>
+				{#if check.albums.length}
+					<button type="button" onclick={() => show(check.id)}>Show in the library</button>
+				{/if}
 				{#if check.id === 'missing_files' && check.albums.length}
 					<button
 						type="button"

@@ -26,7 +26,29 @@ export type AlbumDetail = Album & {
 	art_source: ArtSource | null;
 	/** Whether the mbsync plugin is on and the album is matched to a release. */
 	can_refresh: boolean;
+	problems: AlbumProblem[];
 };
+
+export type HealthCheck =
+	'missing_files' | 'missing_tracks' | 'no_art' | 'unmatched' | 'duplicates';
+
+/** The health checks, in the order the health details list them. */
+export const HEALTH_CHECKS: { id: HealthCheck; label: string }[] = [
+	{ id: 'missing_files', label: 'Missing files' },
+	{ id: 'missing_tracks', label: 'Missing tracks' },
+	{ id: 'no_art', label: 'No cover' },
+	{ id: 'unmatched', label: 'Not matched' },
+	{ id: 'duplicates', label: 'Duplicates' }
+];
+
+export interface AlbumProblem {
+	id: HealthCheck;
+	label: string;
+	/** What exactly is wrong, e.g. which track numbers are missing. */
+	detail: string;
+	/** For duplicates: the other albums. */
+	others?: Pick<Album, 'id' | 'album' | 'albumartist' | 'year'>[];
+}
 
 export interface AlbumEdit {
 	album?: Record<string, string>;
@@ -53,8 +75,9 @@ async function get<T>(path: string, params: Record<string, string | number> = {}
 }
 
 export const api = {
-	albums: (q = '', order: AlbumOrder = 'default', offset = 0, limit = 100) =>
-		get<Page<Album>>('/albums', { q, order, offset, limit }),
+	/** `problem` keeps only albums failing that health check ('any' for any of them). */
+	albums: (q = '', order: AlbumOrder = 'default', offset = 0, limit = 100, problem = '') =>
+		get<Page<Album>>('/albums', { q, order, offset, limit, ...(problem && { problem }) }),
 	album: (id: number) => get<AlbumDetail>(`/albums/${id}`),
 	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
 	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
@@ -109,7 +132,7 @@ export interface LibraryHealth {
 	albums: number;
 	healthy: number;
 	checks: {
-		id: string;
+		id: HealthCheck;
 		label: string;
 		description: string;
 		albums: Pick<Album, 'id' | 'album' | 'albumartist' | 'year'>[];

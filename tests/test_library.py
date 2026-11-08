@@ -83,3 +83,28 @@ def test_library_health(client, lib):
         "unmatched": 2,
         "duplicates": 2,
     }
+
+
+def test_albums_filtered_by_problem(client, lib):
+    album = lib.albums().get()
+    for item in album.items():
+        item.tracktotal = 5
+        item.store()
+    other = lib.add_album(
+        [Item(title="Again", artist="Radiohead", album="OK Computer", path=b"/x")]
+    )
+
+    def ids(**params):
+        body = client.get("/api/albums", params=params).json()
+        return [a["id"] for a in body["results"]]
+
+    assert ids(problem="missing_tracks") == [album.id]
+    assert sorted(ids(problem="duplicates")) == sorted([album.id, other.id])
+    assert sorted(ids(problem="any")) == sorted([album.id, other.id])
+    assert ids(problem="missing_tracks", q="artist:portishead") == []
+    assert client.get("/api/albums", params={"problem": "bogus"}).status_code == 400
+
+    problems = {p["id"]: p for p in client.get(f"/api/albums/{album.id}").json()["problems"]}
+    assert problems["missing_tracks"]["detail"] == "Missing tracks 4, 5, going by the track totals."
+    assert problems["missing_files"]["detail"].startswith("3 files gone: 01.flac, 02.flac")
+    assert [a["id"] for a in problems["duplicates"]["others"]] == [other.id]

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .art import find_art
 from .common import find_plugin, get_lib, paginate, serialize
 from .imports import require_same_origin
+from .maintenance import HEALTH_CHECKS, problems_of, scan_library
 
 router = APIRouter()
 
@@ -31,10 +32,23 @@ def list_albums(
     request: Request,
     q: str = Query("", description="beets query string, e.g. 'artist:radiohead year:1997'"),
     order: Literal["default", "artist", "album"] = "default",
+    problem: str | None = Query(
+        None, description="only albums failing this health check, or 'any' for any of them"
+    ),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ):
-    albums = get_lib(request).albums(f"{q} {ALBUM_ORDER.get(order, '')}".strip())
+    lib = get_lib(request)
+    albums = lib.albums(f"{q} {ALBUM_ORDER.get(order, '')}".strip())
+    if problem:
+        if problem != "any" and problem not in HEALTH_CHECKS:
+            raise HTTPException(400, f"no such health check: {problem}")
+        _, problems = scan_library(lib)
+        albums = [
+            a
+            for a in albums
+            if a.id in problems and (problem == "any" or problem in problems[a.id])
+        ]
     return paginate(albums, offset, limit)
 
 
@@ -48,6 +62,7 @@ def get_album(request: Request, album_id: int):
     found = find_art(album)
     data["art_source"] = found[0] if found else None
     data["can_refresh"] = bool(album.mb_albumid) and find_plugin("mbsync") is not None
+    data["problems"] = problems_of(get_lib(request), album)
     return data
 
 

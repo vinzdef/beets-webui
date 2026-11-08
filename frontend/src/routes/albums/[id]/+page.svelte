@@ -241,6 +241,35 @@
 		</div>
 	</header>
 
+	{#if album.problems.length && !editing}
+		<section class="problems" aria-label="Problems">
+			<ul>
+				{#each album.problems as problem (problem.id)}
+					<li>
+						<strong>{problem.label}.</strong>
+						{problem.detail}
+						{#if problem.id === 'missing_files'}
+							Run <a href="/">Update library…</a> on the Library page to drop them.
+						{:else if problem.id === 'missing_tracks'}
+							Re-import to see the release's tracklist and what you're missing.
+							<button disabled={busy} onclick={reimport}>Re-import…</button>
+						{:else if problem.id === 'no_art'}
+							Fetch or upload one with the cover buttons above.
+						{:else if problem.id === 'unmatched'}
+							<button disabled={busy} onclick={reimport}>Re-import…</button>
+						{:else if problem.id === 'duplicates' && problem.others}
+							{#each problem.others as other, i (other.id)}
+								{i ? ', ' : ''}<a href="/albums/{other.id}"
+									>{other.albumartist} – {other.album}{other.year ? ` (${other.year})` : ''}</a
+								>
+							{/each}
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
+
 	{#if error}<p class="error">{error}</p>{/if}
 	{#if notice}<p class="notice">{notice}</p>{/if}
 
@@ -407,6 +436,31 @@
 	}
 	.notice {
 		color: var(--ok);
+	}
+	.problems {
+		border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+		background: color-mix(in srgb, var(--warn) 8%, transparent);
+		border-radius: 6px;
+		padding: 0.6rem 0.9rem;
+		margin-bottom: 1.25rem;
+	}
+	.problems ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.problems strong {
+		color: var(--warn);
+	}
+	.problems a {
+		color: inherit;
+	}
+	.problems button {
+		margin-left: 0.25rem;
+		padding: 0.15rem 0.6rem;
 	}
 	td a {
 		color: inherit;

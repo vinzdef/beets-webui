@@ -4,6 +4,8 @@
 	import {
 		api,
 		formatLength,
+		HEALTH_CHECKS,
+		type HealthCheck,
 		type Album,
 		type AlbumOrder,
 		type Item,
@@ -24,6 +26,8 @@
 
 	let query = $state('');
 	let grouping = $state<Grouping>(storedGrouping());
+	// Only albums with this problem ('any' for any); albums views only.
+	let problem = $state<HealthCheck | 'any' | ''>('');
 	let page = $state<Page<Album> | null>(null);
 	let songs = $state<Page<Item> | null>(null);
 	let loadingMore = $state(false);
@@ -96,7 +100,7 @@
 				const result = await api.items(query, 0, SONG_PAGE);
 				if (current === generation) songs = result;
 			} else {
-				const result = await api.albums(query, grouping satisfies AlbumOrder);
+				const result = await api.albums(query, grouping satisfies AlbumOrder, 0, 100, problem);
 				if (current === generation) page = result;
 			}
 		} catch (e) {
@@ -109,15 +113,24 @@
 	export const snapshot: Snapshot<{
 		query: string;
 		grouping: Grouping;
+		problem: HealthCheck | 'any' | '';
 		page: Page<Album> | null;
 		songs: Page<Item> | null;
 	}> = {
-		capture: () => $state.snapshot({ query, grouping, page, songs }),
+		capture: () => $state.snapshot({ query, grouping, problem, page, songs }),
 		restore: (saved) => {
 			generation++;
 			({ query, grouping, page, songs } = saved);
+			problem = saved.problem ?? '';
 		}
 	};
+
+	/** Show only the albums with a problem, e.g. from the health details. */
+	function showProblem(check: HealthCheck | 'any') {
+		problem = check;
+		if (grouping === 'song') grouping = 'album';
+		search();
+	}
 
 	// Rows are short, so songs load in bigger pages than album covers.
 	const SONG_PAGE = 500;
@@ -129,7 +142,7 @@
 				const next = await api.items(query, songs.results.length, SONG_PAGE);
 				songs = { ...next, results: [...songs.results, ...next.results] };
 			} else if (grouping !== 'song' && page) {
-				const next = await api.albums(query, grouping, page.results.length, page.limit);
+				const next = await api.albums(query, grouping, page.results.length, page.limit, problem);
 				page = { ...next, results: [...page.results, ...next.results] };
 			}
 		} catch (e) {
@@ -214,6 +227,15 @@
 			>
 		{/each}
 	</div>
+	{#if grouping !== 'song'}
+		<select bind:value={problem} onchange={search} aria-label="Show albums" class:active={problem}>
+			<option value="">All albums</option>
+			<option value="any">With problems</option>
+			{#each HEALTH_CHECKS as check (check.id)}
+				<option value={check.id}>{check.label}</option>
+			{/each}
+		</select>
+	{/if}
 	{#if shown}<span class="meta">{plural(shown.total, grouping === 'song' ? 'song' : 'album')}</span
 		>{/if}
 	<div class="selection">
@@ -234,7 +256,11 @@
 			<button type="button" onclick={() => (selecting = true)}>Select</button>
 		{/if}
 		{#key healthVersion}
-			<HealthGauge onupdate={openUpdate} onfillcovers={() => (fillingCovers = true)} />
+			<HealthGauge
+				onupdate={openUpdate}
+				onfillcovers={() => (fillingCovers = true)}
+				onshow={showProblem}
+			/>
 		{/key}
 	</div>
 </div>
@@ -519,6 +545,14 @@
 	}
 	.songs tr.selected {
 		background: color-mix(in srgb, var(--accent) 12%, transparent);
+	}
+	select {
+		font: inherit;
+		padding: 0.35rem 0.4rem;
+	}
+	select.active {
+		border-color: var(--warn);
+		color: var(--warn);
 	}
 	.selection {
 		display: flex;
