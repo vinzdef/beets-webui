@@ -80,6 +80,7 @@ The port is published on the host's loopback only, because there's no authentica
 Requires [uv](https://docs.astral.sh/uv/) and [pnpm](https://pnpm.io/).
 
 ```sh
+git config core.hooksPath .githooks      # refuse commits containing music or library files
 uv sync                                  # Python deps into .venv
 cd frontend && pnpm install && cd ..
 

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Refuse commits containing music, beets libraries or example state, even if force-added.
+# Enable with: git config core.hooksPath .githooks
+
+allowed_examples='^examples/(docker/compose\.yaml|docker/config/config\.yaml|local/config\.yaml|(docker|local)/(inbox|music)/\.gitkeep)$'
+media='\.(mp3|flac|m4a|aac|alac|ogg|opus|wav|aiff?|ape|wv|wma|mpc|dsf|dff|cue)$'
+state='(\.db|\.db-journal|\.bak|(^|/)state\.pickle|(^|/)import\.log)$'
+
+bad=$(git diff --cached --name-only --diff-filter=ACR | grep -iE "$media|$state|^examples/" | grep -vE "$allowed_examples")
+
+if [ -n "$bad" ]; then
+	echo "pre-commit: refusing to commit music, library or example state files:" >&2
+	echo "$bad" | sed 's/^/  /' >&2
+	echo "Unstage them with: git restore --staged <file>" >&2
+	exit 1
+fi
