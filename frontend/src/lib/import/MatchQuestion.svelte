@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { formatLength, type AnswerBody, type Candidate, type MatchQuestion } from '$lib/api';
+	import {
+		formatLength,
+		type AnswerBody,
+		type Candidate,
+		type ImportItem,
+		type ImportTrack,
+		type MatchQuestion
+	} from '$lib/api';
 
 	let { question, onanswer }: { question: MatchQuestion; onanswer: (body: AnswerBody) => void } =
 		$props();
@@ -37,6 +44,32 @@
 
 	function changed(a: string | null | undefined, b: string | null | undefined) {
 		return (a ?? '').trim().toLowerCase() !== (b ?? '').trim().toLowerCase();
+	}
+
+	type TrackRow = { item: ImportItem | null; track: ImportTrack };
+	type Row = TrackRow | { item: ImportItem; track: null };
+
+	// The release's tracklist in order, with tracks missing from your files in their place,
+	// followed by files that don't match any track.
+	const rows = $derived.by((): Row[] => {
+		if (!candidate?.tracks) return [];
+		const tracklist: TrackRow[] = [
+			...candidate.tracks,
+			...(candidate.extra_tracks ?? []).map((track) => ({ item: null, track }))
+		].sort((a, b) => (a.track.index ?? 0) - (b.track.index ?? 0));
+		const unmatched = (candidate.extra_items ?? []).map((item) => ({ item, track: null }));
+		return [...tracklist, ...unmatched];
+	});
+
+	/** Colour for a length difference; beets itself tolerates up to 10 seconds. */
+	function lengthClass(a: number | null | undefined, b: number | null | undefined) {
+		if (a == null || b == null) return '';
+		const diff = Math.abs(a - b);
+		return diff > 10 ? 'bad' : diff > 3 ? 'warn' : '';
+	}
+
+	function trackNumber(track: ImportTrack) {
+		return track.medium_index ?? track.index;
 	}
 </script>
 
@@ -109,36 +142,70 @@
 					{#if isAlbum && candidate.tracks}
 						<table>
 							<thead>
-								<tr><th>#</th><th>Your file</th><th></th><th>Match</th><th>Length</th></tr>
+								<tr>
+									<th>#</th>
+									<th>Your file</th>
+									<th class="num">Length</th>
+									<th></th>
+									<th>Match</th>
+									<th class="num">Length</th>
+								</tr>
 							</thead>
 							<tbody>
-								{#each candidate.tracks as { item, track }}
-									<tr>
-										<td class="num">{track.medium_index ?? track.index}</td>
-										<td>{item.title || item.path.split('/').pop()}</td>
+								{#each rows as { item, track }}
+									<tr class:missing={!item} class:unmatched={!track}>
+										{#if track}
+											<td
+												class="num"
+												class:warn={item?.track != null && item.track !== trackNumber(track)}
+												title={item?.track != null && item.track !== trackNumber(track)
+													? `Your file says track ${item.track}`
+													: undefined}
+											>
+												{trackNumber(track)}
+											</td>
+										{:else}
+											<td class="num">{item?.track || ''}</td>
+										{/if}
+										{#if item}
+											<td>{item.title || item.path.split('/').pop()}</td>
+											<td class="num">{formatLength(item.length)}</td>
+										{:else}
+											<td class="bad">missing from your files</td>
+											<td class="num"></td>
+										{/if}
 										<td class="arrow">→</td>
-										<td class:changed={changed(item.title, track.title)}>{track.title}</td>
-										<td class="num">{formatLength(track.length)}</td>
+										{#if track}
+											<td class:warn={item && changed(item.title, track.title)}>{track.title}</td>
+											<td class="num {item ? lengthClass(item.length, track.length) : ''}">
+												{formatLength(track.length)}
+											</td>
+										{:else}
+											<td class="bad">no matching track</td>
+											<td class="num"></td>
+										{/if}
 									</tr>
 								{/each}
 							</tbody>
 						</table>
-						{#if candidate.extra_tracks?.length}
-							<p class="warn">
-								Missing tracks: {candidate.extra_tracks.map((t) => t.title).join(', ')}
-							</p>
-						{/if}
-						{#if candidate.extra_items?.length}
-							<p class="warn">
-								Unmatched files: {candidate.extra_items.map((i) => i.title || i.path).join(', ')}
-							</p>
-						{/if}
+						<p class="legend">
+							<span class="warn">Orange</span>: title, track number or length (over 3 s) differs.
+							<span class="bad">Red</span>: missing track, unmatched file, or length off by over 10
+							s.
+						</p>
 					{:else}
 						<dl>
 							<dt>Your file</dt>
 							<dd>{task.items[0]?.title} ({formatLength(task.items[0]?.length)})</dd>
 							<dt>Match</dt>
-							<dd>{candidate.name} ({formatLength(candidate.length)})</dd>
+							<dd>
+								<span class:warn={changed(task.items[0]?.title, candidate.name)}
+									>{candidate.name}</span
+								>
+								(<span class={lengthClass(task.items[0]?.length, candidate.length)}
+									>{formatLength(candidate.length)}</span
+								>)
+							</dd>
 						</dl>
 					{/if}
 					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
@@ -249,12 +316,28 @@
 		opacity: 0.4;
 		width: 1rem;
 	}
-	.changed {
+	.warn,
+	.num.warn {
 		color: var(--warn);
+		opacity: 1;
 	}
-	.warn {
+	.bad,
+	.num.bad {
+		color: var(--bad);
+		opacity: 1;
+	}
+	tr.missing,
+	tr.unmatched {
+		background: color-mix(in srgb, var(--bad) 8%, transparent);
+	}
+	tr.missing .bad,
+	tr.unmatched .bad {
+		font-style: italic;
+	}
+	.legend {
 		margin: 0;
-		color: var(--warn);
+		font-size: 0.85em;
+		opacity: 0.75;
 	}
 	.empty {
 		opacity: 0.8;
