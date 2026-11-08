@@ -4,17 +4,65 @@
 directory: music
 library: library.db
 
-# Listing plugins replaces beets' default of [musicbrainz], so it must be named here.
-plugins: musicbrainz fetchart webui
+# Setting `plugins` replaces beets' default of [musicbrainz], so it has to be listed.
+plugins: musicbrainz fetchart embedart lastgenre fromfilename scrub webui
 
 import:
-  # Copy rather than move, so inbox/ survives for re-imports after wiping music/ and the library.
+  # Copy from the inbox rather than move, so the inbox can be re-imported after a reset.
   copy: yes
-  write: yes
+  write: yes                # write the new tags into the files
   log: import.log
+  duplicate_action: ask     # show the duplicate screen when an album is already in the library
+
+# Clean-up rules for generated folder and file names: each regex is replaced by its value.
+# This list replaces beets' defaults entirely.
+replace:
+  '[\\]': ""
+  "[_]": "-"
+  "[/]": "-"
+  '^\.+': ""
+  '[\x00-\x1f]': ""
+  '[<>:"\?\*\|]': ""
+  '\.$': ""
+  '\s+$': ""
+  '^\s+': ""
+  "^-": ""
+  "’": ""
+  "′": ""
+  "″": ""
+  "‐": "-"
+
+musicbrainz:
+  # Also store the release's IDs on these services, taken from MusicBrainz's links.
+  external_ids:
+    discogs: yes
+    bandcamp: yes
+    spotify: yes
+    deezer: yes
+    beatport: yes
+    tidal: yes
 
 fetchart:
   auto: yes
+  minwidth: 500             # ignore covers narrower than 500px
+  enforce_ratio: 10px       # accept covers up to 10px away from square
+  sources: "*"              # try every art source
+
+embedart:
+  auto: yes                 # embed the cover into each file on import
+  ifempty: yes              # ...unless the file already has one
+  remove_art_file: no       # keep cover.jpg: the library grid shows covers from it
+
+lastgenre:
+  auto: yes
+  source: track             # look up genres per track
+  count: 4                  # up to 4 genres
+  prefer_specific: yes      # e.g. "shoegaze" over "rock"
+  force: yes                # replace existing genres
+  fallback: ""
+
+# fromfilename and scrub need no settings: fromfilename fills in title and track number from
+# filenames when tags are missing; scrub strips existing tags before beets writes its own.
 
 webui:
   inboxes:

@@ -15,7 +15,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* README.md ./
 COPY src/ src/
 COPY --from=frontend /app/src/beetsplug/webui/static src/beetsplug/webui/static
-RUN uv pip install --system --no-cache .
+# The plugin plus the extras the example config's plugins need.
+RUN uv pip install --system --no-cache . "beets[fetchart,embedart,lastgenre]"
 
 COPY docker/ /docker/
 ENV BEETSDIR=/config
