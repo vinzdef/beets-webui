@@ -8,6 +8,7 @@
 		type ImportTrack,
 		type MatchQuestion
 	} from '$lib/api';
+	import ManualTags from './ManualTags.svelte';
 
 	let { question, onanswer }: { question: MatchQuestion; onanswer: (body: AnswerBody) => void } =
 		$props();
@@ -36,6 +37,8 @@
 	let searchArtist = $state('');
 	let searchName = $state('');
 	let searchIds = $state('');
+	// Entering tags by hand instead of choosing a release.
+	let manual = $state(false);
 
 	const task = $derived(question.task);
 	const candidate = $derived<Candidate | undefined>(question.candidates[selected]);
@@ -267,237 +270,245 @@
 		<p class="path">{task.paths.join(', ')}</p>
 	</header>
 
-	<div class="actions">
-		{#if candidate}
-			<button
-				class="primary"
-				disabled={nothingPaired}
-				title={nothingPaired ? 'Pair at least one file with a track, or use as-is' : undefined}
-				onclick={apply}
-			>
-				Apply {formatSimilarity(candidate)}% match{pairedByHand ? ', paired by hand' : ''}
-			</button>
-		{/if}
-		{#each actions as choice (choice.short)}
-			<button onclick={() => onanswer({ type: 'choice', short: choice.short })}>
-				{labels[choice.short] ?? choice.long}
-			</button>
-		{/each}
-	</div>
-
-	{#if unmatchedCount}
-		<label class="keep" title="beets imports only the files that match a track on the release">
-			<input type="checkbox" bind:checked={keepUnmatched} />
-			Keep {unmatchedCount === 1 ? 'the file' : `the ${unmatchedCount} files`} this release doesn't have
-		</label>
-	{/if}
-
-	<div class="searches">
-		<form
-			onsubmit={(e) => {
-				e.preventDefault();
-				onanswer({ type: 'search', artist: searchArtist, name: searchName });
-			}}
-		>
-			<input bind:value={searchArtist} placeholder="Artist" />
-			<input bind:value={searchName} placeholder={isAlbum ? 'Album' : 'Title'} />
-			<button
-				disabled={!searchArtist.trim() || !searchName.trim()}
-				title="beets searches only with both an artist and a name">Search</button
-			>
-		</form>
-		<form
-			onsubmit={(e) => {
-				e.preventDefault();
-				onanswer({ type: 'id', ids: searchIds });
-			}}
-		>
-			<input
-				bind:value={searchIds}
-				placeholder="{question.sources.join(' or ') || 'Release'} ID or URL"
-			/>
-			<button>Look up</button>
-		</form>
-	</div>
-
-	{#if question.candidates.length === 0}
-		<p class="empty">No matches found. Search by name or ID above, or choose what to do.</p>
+	{#if manual}
+		<ManualTags {task} {onanswer} oncancel={() => (manual = false)} />
 	{:else}
-		<div class="layout">
-			<ol class="candidates">
-				{#each question.candidates as c (c.index)}
-					<li>
-						<button class:selected={c.index === selected} onclick={() => (selected = c.index)}>
-							<span class="score {c.strength}">{formatSimilarity(c)}%</span>
-							<span class="title">{c.artist} – {c.name}</span>
-							{#if meta(c)}<span class="meta">{meta(c)}</span>{/if}
-							{#if !isAlbum && c.album}<span class="meta">{c.album}</span>{/if}
-							{#if c.penalties.length}
-								<span class="penalties">≠ {c.penalties.join(', ')}</span>
-							{/if}
-						</button>
-					</li>
-				{/each}
-			</ol>
-
+		<div class="actions">
 			{#if candidate}
-				<div class="detail">
-					{#if isAlbum && candidate.tracks}
-						<table>
-							<thead>
-								<tr>
-									<th>#</th>
-									<th>Your file</th>
-									<th class="num">Length</th>
-									<th></th>
-									<th>Match</th>
-									<th class="num">Length</th>
-								</tr>
-							</thead>
-							{#each sections as section (section.disc)}
-								<tbody>
-									{#if section.disc === null}
-										<tr class="section"><th colspan="6">Not on this release</th></tr>
-									{:else if multiDisc}
-										<tr class="section"><th colspan="6">Disc {section.disc}</th></tr>
-									{/if}
-									{#each section.rows as { item, track }}
-										<tr class:missing={!item} class:unmatched={!track}>
-											{#if track}
-												<td
-													class="num"
-													class:warn={numberDiffers(item, track)}
-													title={numberDiffers(item, track)
-														? `Your file says track ${item?.track}`
-														: undefined}
-												>
-													{trackNumber(track)}
-												</td>
-											{:else if item && keepUnmatched}
-												<td class="num" class:warn={numberClashes(item)}>
-													<select
-														class="number"
-														value={String(keptNumber(item))}
-														aria-label="Track number after import"
-														title={numberClashes(item)
-															? 'Another track ends up with this number too'
-															: 'The track number this file gets'}
-														onchange={(e) => (extraTags[item.path].track = e.currentTarget.value)}
-													>
-														{#each numberChoices(item) as n (n)}
-															<option value={String(n)}
-																>{n}{sameNumberAs(item, n)
-																	? ` · same as ${sameNumberAs(item, n)}`
-																	: n === item.track
-																		? ' (in its tags)'
-																		: ''}</option
-															>
-														{/each}
-													</select>
-												</td>
-											{:else}
-												<td class="num">{item?.track || ''}</td>
-											{/if}
-											{#if item && !track && keepUnmatched}
-												<td>
-													<input
-														class="tag"
-														bind:value={extraTags[item.path].title}
-														placeholder={item.path.split('/').pop()}
-														aria-label="Title"
-													/>
-												</td>
-												<td class="num">{formatLength(item.length)}</td>
-											{:else if item}
-												<td title={item.path.split('/').pop()}>
-													{item.title || item.path.split('/').pop()}
-												</td>
-												<td class="num">{formatLength(item.length)}</td>
-											{:else}
-												<td class="bad">missing from your files</td>
-												<td class="num"></td>
-											{/if}
-											<td class="arrow">→</td>
-											{#if item}
-												<td class:warn={track && changed(item.title, track.title)}>
-													<select
-														value={track?.pos ?? -1}
-														aria-label="Release track for {item.title || item.path}"
-														onchange={(e) => {
-															const pos = Number(e.currentTarget.value);
-															pair(item.path, pos < 0 ? null : pos);
-														}}
-													>
-														{#each releaseTracks as t (t.pos)}
-															<option value={t.pos}>{trackNumber(t)}. {t.title}</option>
-														{/each}
-														<option value={-1}>Not on this release</option>
-													</select>
-													{#if !track}
-														<small class={keepUnmatched ? 'warn' : 'bad'}>
-															{keepUnmatched ? 'kept with the album' : "won't be imported"}
-															{#if keepUnmatched && multiDisc}
-																on disc
-																<select
-																	class="disc"
-																	value={String(keptDisc(item))}
-																	aria-label="Disc after import"
-																	onchange={(e) => {
-																		extraTags[item.path].disc = e.currentTarget.value;
-																		// Its number restarts from the default on the new disc.
-																		extraTags[item.path].track = '';
-																	}}
-																>
-																	{#each discs as d (d)}
-																		<option value={String(d)}>{d}</option>
-																	{/each}
-																</select>
-															{/if}
-														</small>
-													{/if}
-												</td>
-											{:else}
-												<td>{track?.title}</td>
-											{/if}
-											{#if track}
-												<td class="num {item ? lengthClass(item.length, track.length) : ''}">
-													{formatLength(track.length)}
-												</td>
-											{:else}
-												<td class="num"></td>
-											{/if}
-										</tr>
-									{/each}
-								</tbody>
-							{/each}
-						</table>
-					{:else}
-						<dl>
-							<dt>Your file</dt>
-							<dd>{task.items[0]?.title} ({formatLength(task.items[0]?.length)})</dd>
-							<dt>Match</dt>
-							<dd>
-								<span class:warn={changed(task.items[0]?.title, candidate.name)}
-									>{candidate.name}</span
-								>
-								(<span class={lengthClass(task.items[0]?.length, candidate.length)}
-									>{formatLength(candidate.length)}</span
-								>)
-							</dd>
-						</dl>
-					{/if}
-					{#if pairedByHand}
-						<p class="meta">
-							Paired by hand; the match percentage is for beets' own pairing.
-							<button class="link" onclick={() => (pairing = { ...ownPairing })}
-								>Reset pairing</button
-							>
-						</p>
-					{/if}
-					{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
-				</div>
+				<button
+					class="primary"
+					disabled={nothingPaired}
+					title={nothingPaired ? 'Pair at least one file with a track, or use as-is' : undefined}
+					onclick={apply}
+				>
+					Apply {formatSimilarity(candidate)}% match{pairedByHand ? ', paired by hand' : ''}
+				</button>
 			{/if}
+			{#each actions as choice (choice.short)}
+				<button onclick={() => onanswer({ type: 'choice', short: choice.short })}>
+					{labels[choice.short] ?? choice.long}
+				</button>
+			{/each}
+			<button onclick={() => (manual = true)}>Enter tags…</button>
 		</div>
+
+		{#if unmatchedCount}
+			<label class="keep" title="beets imports only the files that match a track on the release">
+				<input type="checkbox" bind:checked={keepUnmatched} />
+				Keep {unmatchedCount === 1 ? 'the file' : `the ${unmatchedCount} files`} this release doesn't
+				have
+			</label>
+		{/if}
+
+		<div class="searches">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					onanswer({ type: 'search', artist: searchArtist, name: searchName });
+				}}
+			>
+				<input bind:value={searchArtist} placeholder="Artist" />
+				<input bind:value={searchName} placeholder={isAlbum ? 'Album' : 'Title'} />
+				<button
+					disabled={!searchArtist.trim() || !searchName.trim()}
+					title="beets searches only with both an artist and a name">Search</button
+				>
+			</form>
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					onanswer({ type: 'id', ids: searchIds });
+				}}
+			>
+				<input
+					bind:value={searchIds}
+					placeholder="{question.sources.join(' or ') || 'Release'} ID or URL"
+				/>
+				<button>Look up</button>
+			</form>
+		</div>
+
+		{#if question.candidates.length === 0}
+			<p class="empty">
+				No matches found. Search by name or ID above, enter the tags yourself, or choose what to do.
+			</p>
+		{:else}
+			<div class="layout">
+				<ol class="candidates">
+					{#each question.candidates as c (c.index)}
+						<li>
+							<button class:selected={c.index === selected} onclick={() => (selected = c.index)}>
+								<span class="score {c.strength}">{formatSimilarity(c)}%</span>
+								<span class="title">{c.artist} – {c.name}</span>
+								{#if meta(c)}<span class="meta">{meta(c)}</span>{/if}
+								{#if !isAlbum && c.album}<span class="meta">{c.album}</span>{/if}
+								{#if c.penalties.length}
+									<span class="penalties">≠ {c.penalties.join(', ')}</span>
+								{/if}
+							</button>
+						</li>
+					{/each}
+				</ol>
+
+				{#if candidate}
+					<div class="detail">
+						{#if isAlbum && candidate.tracks}
+							<table>
+								<thead>
+									<tr>
+										<th>#</th>
+										<th>Your file</th>
+										<th class="num">Length</th>
+										<th></th>
+										<th>Match</th>
+										<th class="num">Length</th>
+									</tr>
+								</thead>
+								{#each sections as section (section.disc)}
+									<tbody>
+										{#if section.disc === null}
+											<tr class="section"><th colspan="6">Not on this release</th></tr>
+										{:else if multiDisc}
+											<tr class="section"><th colspan="6">Disc {section.disc}</th></tr>
+										{/if}
+										{#each section.rows as { item, track }}
+											<tr class:missing={!item} class:unmatched={!track}>
+												{#if track}
+													<td
+														class="num"
+														class:warn={numberDiffers(item, track)}
+														title={numberDiffers(item, track)
+															? `Your file says track ${item?.track}`
+															: undefined}
+													>
+														{trackNumber(track)}
+													</td>
+												{:else if item && keepUnmatched}
+													<td class="num" class:warn={numberClashes(item)}>
+														<select
+															class="number"
+															value={String(keptNumber(item))}
+															aria-label="Track number after import"
+															title={numberClashes(item)
+																? 'Another track ends up with this number too'
+																: 'The track number this file gets'}
+															onchange={(e) => (extraTags[item.path].track = e.currentTarget.value)}
+														>
+															{#each numberChoices(item) as n (n)}
+																<option value={String(n)}
+																	>{n}{sameNumberAs(item, n)
+																		? ` · same as ${sameNumberAs(item, n)}`
+																		: n === item.track
+																			? ' (in its tags)'
+																			: ''}</option
+																>
+															{/each}
+														</select>
+													</td>
+												{:else}
+													<td class="num">{item?.track || ''}</td>
+												{/if}
+												{#if item && !track && keepUnmatched}
+													<td>
+														<input
+															class="tag"
+															bind:value={extraTags[item.path].title}
+															placeholder={item.path.split('/').pop()}
+															aria-label="Title"
+														/>
+													</td>
+													<td class="num">{formatLength(item.length)}</td>
+												{:else if item}
+													<td title={item.path.split('/').pop()}>
+														{item.title || item.path.split('/').pop()}
+													</td>
+													<td class="num">{formatLength(item.length)}</td>
+												{:else}
+													<td class="bad">missing from your files</td>
+													<td class="num"></td>
+												{/if}
+												<td class="arrow">→</td>
+												{#if item}
+													<td class:warn={track && changed(item.title, track.title)}>
+														<select
+															value={track?.pos ?? -1}
+															aria-label="Release track for {item.title || item.path}"
+															onchange={(e) => {
+																const pos = Number(e.currentTarget.value);
+																pair(item.path, pos < 0 ? null : pos);
+															}}
+														>
+															{#each releaseTracks as t (t.pos)}
+																<option value={t.pos}>{trackNumber(t)}. {t.title}</option>
+															{/each}
+															<option value={-1}>Not on this release</option>
+														</select>
+														{#if !track}
+															<small class={keepUnmatched ? 'warn' : 'bad'}>
+																{keepUnmatched ? 'kept with the album' : "won't be imported"}
+																{#if keepUnmatched && multiDisc}
+																	on disc
+																	<select
+																		class="disc"
+																		value={String(keptDisc(item))}
+																		aria-label="Disc after import"
+																		onchange={(e) => {
+																			extraTags[item.path].disc = e.currentTarget.value;
+																			// Its number restarts from the default on the new disc.
+																			extraTags[item.path].track = '';
+																		}}
+																	>
+																		{#each discs as d (d)}
+																			<option value={String(d)}>{d}</option>
+																		{/each}
+																	</select>
+																{/if}
+															</small>
+														{/if}
+													</td>
+												{:else}
+													<td>{track?.title}</td>
+												{/if}
+												{#if track}
+													<td class="num {item ? lengthClass(item.length, track.length) : ''}">
+														{formatLength(track.length)}
+													</td>
+												{:else}
+													<td class="num"></td>
+												{/if}
+											</tr>
+										{/each}
+									</tbody>
+								{/each}
+							</table>
+						{:else}
+							<dl>
+								<dt>Your file</dt>
+								<dd>{task.items[0]?.title} ({formatLength(task.items[0]?.length)})</dd>
+								<dt>Match</dt>
+								<dd>
+									<span class:warn={changed(task.items[0]?.title, candidate.name)}
+										>{candidate.name}</span
+									>
+									(<span class={lengthClass(task.items[0]?.length, candidate.length)}
+										>{formatLength(candidate.length)}</span
+									>)
+								</dd>
+							</dl>
+						{/if}
+						{#if pairedByHand}
+							<p class="meta">
+								Paired by hand; the match percentage is for beets' own pairing.
+								<button class="link" onclick={() => (pairing = { ...ownPairing })}
+									>Reset pairing</button
+								>
+							</p>
+						{/if}
+						{#if candidate.disambig}<p class="meta">{candidate.disambig}</p>{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </section>
 

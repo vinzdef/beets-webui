@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from array import array
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -39,6 +40,38 @@ log = logging.getLogger("beets")
 LOG_LIMIT = 500
 # Short letters the built-in prompt uses for things that aren't PromptChoices here.
 RESERVED_SHORTS = {"a", "e", "i", "m"}
+# Tags entered by hand on the match screen, in place of a release's: the album's, set on each of
+# its files, and each file's own.
+MANUAL_ALBUM_FIELDS = (
+    "album",
+    "albumartist",
+    "year",
+    "month",
+    "day",
+    "original_year",
+    "genres",
+    "label",
+    "catalognum",
+    "country",
+    "albumtypes",
+    "albumstatus",
+    "albumdisambig",
+    "media",
+    "barcode",
+    "language",
+    "script",
+    "comp",
+)
+MANUAL_ITEM_FIELDS = ("disc", "track", "title", "artist")
+# Cleared from files tagged by hand, so that nothing (`beet mbsync`, the album page's refresh)
+# applies the release they came from over the tags entered.
+RELEASE_ID_FIELDS = (
+    "mb_albumid",
+    "mb_releasegroupid",
+    "mb_trackid",
+    "mb_releasetrackid",
+    "discogs_albumid",
+)
 
 
 class ImportHistory:
@@ -449,6 +482,9 @@ class WebImportSession(ImportSession):
                 proposal = _tag(task, answer["artist"].strip(), answer["name"].strip())
             elif kind == "id":
                 proposal = _tag(task, search_ids=answer["ids"].split())
+            elif kind == "manual":
+                _tag_by_hand(task, answer["album"], answer["items"])
+                return self._chose(task, Action.RETAG)
             else:
                 raise ValueError(f"unknown answer type {kind!r}")
 
@@ -472,6 +508,7 @@ class WebImportSession(ImportSession):
             what = {
                 Action.SKIP: "Skipping",
                 Action.ASIS: "Importing as-is",
+                Action.RETAG: "Importing with tags entered by hand",
                 Action.TRACKS: "Importing as tracks",
                 Action.ALBUMS: "Grouping albums",
                 Action.RESCAN: "Rescanning",
@@ -536,6 +573,17 @@ def _remap(task: ImportTask, match: AlbumMatch, pairing: dict[str, int | None]) 
         extra_items=[i for p, i in items.items() if pairing.get(p) is None],
         extra_tracks=[t for t in tracks if id(t) not in taken],
     )
+
+
+def _tag_by_hand(task: ImportTask, album: dict[str, str], items: dict[str, dict[str, str]]) -> None:
+    """Tag the files as entered on the match screen: `album` on every file, `items` by path.
+    Values are strings, parsed by each field's type as `beet modify` does. Importing with
+    `Action.RETAG`, as the edit plugin does, writes them to the files."""
+    for item in task.items:
+        for key in RELEASE_ID_FIELDS:
+            item[key] = item._type(key).null
+        for key, value in {**album, **items.get(displayable_path(item.path), {})}.items():
+            item.set_parse(key, value)
 
 
 def _keep_unmatched(task: ImportTask, match: AlbumMatch, tags: dict[str, dict[str, Any]]) -> None:
@@ -623,7 +671,17 @@ def serialize_task(task: ImportTask) -> dict[str, Any]:
         "artist": source.artist,
         "name": source.name,
         "items": [serialize_item(i) for i in source.items],
+        # The album's tags in its files (each file's most common value), to start entering
+        # tags by hand from.
+        "album_tags": {key: _most_common(source.items, key) for key in MANUAL_ALBUM_FIELDS},
     }
+
+
+def _most_common(items: list[Item], key: str) -> Any:
+    values = [i.get(key) for i in items]
+    counts = Counter(json.dumps(v, default=str) for v in values)
+    best = counts.most_common(1)[0][0] if counts else None
+    return next((v for v in values if json.dumps(v, default=str) == best), None)
 
 
 def serialize_item(item: Item) -> dict[str, Any]:

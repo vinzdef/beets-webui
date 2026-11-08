@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..imports import ImportBusyError, ImportManager
+from ..imports import MANUAL_ALBUM_FIELDS, MANUAL_ITEM_FIELDS, ImportBusyError, ImportManager
 from .common import update_lock
 
 router = APIRouter()
@@ -171,7 +171,7 @@ class ExtraTags(BaseModel):
 
 class Answer(BaseModel):
     question: int
-    type: Literal["apply", "choice", "search", "id", "duplicate", "resume"]
+    type: Literal["apply", "choice", "search", "id", "manual", "duplicate", "resume"]
     candidate: int | None = None
     short: str | None = None
     artist: str = ""
@@ -186,6 +186,10 @@ class Answer(BaseModel):
     mapping: dict[str, int | None] | None = None
     # On apply, for kept files the release doesn't have: their title and track number.
     extra_tags: dict[str, ExtraTags] | None = None
+    # On manual, tags entered by hand in place of a release's: the album's, set on each of its
+    # files, and each file's own by path. Strings, parsed as `beet modify` does.
+    album: dict[str, str] = {}
+    items: dict[str, dict[str, str]] = {}
 
 
 @router.post("/imports/current/answer", dependencies=[Depends(require_same_origin)])
@@ -268,6 +272,17 @@ def validate_answer(question: dict[str, Any], body: Answer) -> dict[str, Any]:
             if not body.ids.strip():
                 raise HTTPException(400, "enter an ID")
             return {"type": "id", "ids": body.ids}
+        if body.type == "manual":
+            if unknown := set(body.album) - set(MANUAL_ALBUM_FIELDS):
+                raise HTTPException(400, f"can't enter album fields: {', '.join(sorted(unknown))}")
+            if not set(body.items) <= {i["path"] for i in question["task"]["items"]}:
+                raise HTTPException(400, "tags can only be entered for this album's files")
+            for fields in body.items.values():
+                if unknown := set(fields) - set(MANUAL_ITEM_FIELDS):
+                    raise HTTPException(
+                        400, f"can't enter track fields: {', '.join(sorted(unknown))}"
+                    )
+            return {"type": "manual", "album": body.album, "items": body.items}
     elif kind == "duplicate" and body.type == "duplicate":
         if body.action not in {o["value"] for o in question["options"]}:
             raise HTTPException(400, "invalid duplicate action")

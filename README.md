@@ -202,6 +202,8 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 - [x] Interactive matching with the CLI's choices: apply a candidate, skip, as-is, as tracks, group
       albums, rescan, search by name or ID, plugin choices, duplicates, resume; see
       [docs/interactive-import.md](docs/interactive-import.md)
+- [x] Enter an album's tags by hand on the match screen, when no release fits (like the `edit`
+      plugin's import choice)
 - [ ] Forward plugin terminal prompts (`badfiles`, …) to the browser
 - [ ] Security: Host validation and authentication before binding to `0.0.0.0`
       (cross-origin writes are already refused)

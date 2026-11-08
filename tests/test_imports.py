@@ -178,6 +178,59 @@ def test_apply_candidate(client, lib, album):
     assert any(e["kind"] == "imported" for e in state["log"])
 
 
+def test_enter_tags_by_hand(client, lib, tmp_path):
+    folder = make_album(tmp_path / "inbox" / "Hand")
+    media = MediaFile(folder / "01.mp3")
+    media.mb_albumid = "00000000-0000-0000-0000-000000000001"
+    media.save()
+    client.post("/api/imports", json={"paths": [str(folder)]}).raise_for_status()
+
+    q = question(client)
+    assert q["task"]["album_tags"]["album"] == "Tag Album"
+    paths = [i["path"] for i in q["task"]["items"]]
+    answer(
+        client,
+        q,
+        type="manual",
+        album={"album": "Hand Album", "albumartist": "Hand Artist", "year": "2001", "comp": "no"},
+        items={
+            paths[0]: {"title": "Second", "track": "2"},
+            paths[1]: {"title": "First", "track": "1", "artist": "Guest"},
+        },
+    )
+    state = finished(client)
+
+    assert state["status"] == "done", state
+    (imported,) = lib.albums()
+    assert (imported.album, imported.albumartist, imported.year) == (
+        "Hand Album",
+        "Hand Artist",
+        2001,
+    )
+    items = sorted(imported.items(), key=lambda i: i.track)
+    assert [(i.track, i.title, i.artist) for i in items] == [
+        (1, "First", "Guest"),
+        (2, "Second", "Tag Artist"),
+    ]
+    # Written to the files, without the release ID they had.
+    media = MediaFile(items[1].path)
+    assert (media.album, media.title, media.year) == ("Hand Album", "Second", 2001)
+    assert not media.mb_albumid
+
+
+def test_enter_tags_by_hand_checks_fields(client, album):
+    client.post("/api/imports", json={"paths": [str(album)]}).raise_for_status()
+    q = question(client)
+    body = {"question": q["id"], "type": "manual"}
+
+    response = client.post("/api/imports/current/answer", json={**body, "album": {"path": "/x"}})
+    assert response.status_code == 400
+    response = client.post(
+        "/api/imports/current/answer", json={**body, "items": {"/elsewhere.mp3": {"title": "x"}}}
+    )
+    assert response.status_code == 400
+
+
 def test_group_albums_offered_for_mixed_folders(client, lib, tmp_path):
     folder = make_album(tmp_path / "inbox" / "Mixed")
     media = MediaFile(folder / "02.mp3")

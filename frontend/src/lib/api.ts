@@ -259,6 +259,8 @@ export interface ImportTask {
 	artist: string;
 	name: string;
 	items: ImportItem[];
+	/** The album's tags in its files (each one's most common value), to enter tags from. */
+	album_tags: Record<string, unknown>;
 }
 
 export interface MatchQuestion {
@@ -346,6 +348,12 @@ export type AnswerBody =
 	| { type: 'choice'; short: string }
 	| { type: 'search'; artist: string; name: string }
 	| { type: 'id'; ids: string }
+	| {
+			type: 'manual';
+			/** Tags entered by hand: the album's, set on each of its files, and each file's own. */
+			album: Record<string, string>;
+			items: Record<string, Record<string, string>>;
+	  }
 	| { type: 'duplicate'; action: string }
 	| { type: 'resume'; resume: boolean };
 
