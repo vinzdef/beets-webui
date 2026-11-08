@@ -16,6 +16,15 @@ router = APIRouter()
 
 # Sort tokens appended to the query for each way of grouping albums.
 ALBUM_ORDER = {"artist": "albumartist+ year+ album+", "album": "album+ albumartist+"}
+# Sorting songs by a column: that field first (either way), then these to break ties.
+SONG_ORDER = {
+    "track": ["track", "album", "title"],
+    "title": ["title", "artist"],
+    "artist": ["artist", "album", "disc", "track"],
+    "album": ["album", "disc", "track"],
+}
+# Filters for the songs view: tracks on no album ("singletons"), or only those on one.
+SONG_FILTERS = {"singletons": "singleton:true", "on_album": "singleton:false"}
 
 # Fields the UI can edit; values arrive as strings, parsed by each field's beets type as
 # `beet modify` does. Album fields are copied to the album's tracks, as in beets.
@@ -50,6 +59,32 @@ def list_albums(
             if a.id in problems and (problem == "any" or problem in problems[a.id])
         ]
     return paginate(albums, offset, limit)
+
+
+@router.get("/artists")
+def list_by_artist(
+    request: Request,
+    q: str = Query("", description="beets query string"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """The artist view: albums and the tracks on no album, by artist (album artist for albums),
+    each artist's albums before their loose tracks. Rows say which they are in `kind`."""
+    lib = get_lib(request)
+    albums = [("album", a.albumartist, a) for a in lib.albums(f"{q} {ALBUM_ORDER['artist']}")]
+    tracks = [("track", i.artist, i) for i in lib.items(f"{q} singleton:true artist+ title+")]
+    # A stable sort keeps beets' order (by year and album, or by title) within each artist.
+    rows = sorted(albums + tracks, key=lambda r: (r[1].lower(), r[0] == "track"))
+    return {
+        "total": len(rows),
+        "albums": len(albums),
+        "tracks": len(tracks),
+        "offset": offset,
+        "limit": limit,
+        "results": [
+            serialize(obj) | {"kind": kind} for kind, _, obj in rows[offset : offset + limit]
+        ],
+    }
 
 
 @router.get("/albums/{album_id}")
@@ -89,10 +124,21 @@ def delete_album(
 def list_items(
     request: Request,
     q: str = Query("", description="beets query string"),
+    sort: Literal["track", "title", "artist", "album"] | None = Query(
+        None, description="sort by this column instead of beets' default order"
+    ),
+    desc: bool = Query(False, description="sort that column descending"),
+    only: Literal["singletons", "on_album"] | None = Query(
+        None, description="only tracks on no album, or only those on one"
+    ),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ):
-    return paginate(get_lib(request).items(q), offset, limit)
+    parts = [q, SONG_FILTERS[only] if only else ""]
+    if sort:
+        first, *rest = SONG_ORDER[sort]
+        parts += [f"{first}{'-' if desc else '+'}", *(f"{f}+" for f in rest)]
+    return paginate(get_lib(request).items(" ".join(p for p in parts if p)), offset, limit)
 
 
 @router.get("/items/{item_id}")

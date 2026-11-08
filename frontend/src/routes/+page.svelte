@@ -8,9 +8,11 @@
 		type HealthCheck,
 		type Album,
 		type AlbumOrder,
+		type ArtistRow,
 		type Item,
 		type LibraryUpdatePreview,
-		type Page
+		type Page,
+		type SongColumn
 	} from '$lib/api';
 	import BulkEditDialog from '$lib/library/BulkEditDialog.svelte';
 	import CoverFillDialog from '$lib/library/CoverFillDialog.svelte';
@@ -31,8 +33,13 @@
 	let grouping = $state<Grouping>(storedGrouping());
 	// Only albums with this problem ('any' for any); albums views only.
 	let problem = $state<HealthCheck | 'any' | ''>('');
-	let page = $state<Page<Album> | null>(null);
+	// The artists view also lists tracks on no album, and counts albums and tracks apart.
+	type AlbumPage = Page<Album | ArtistRow> & { albums?: number; tracks?: number };
+	let page = $state<AlbumPage | null>(null);
 	let songs = $state<Page<Item> | null>(null);
+	// The songs view's column sort (beets' default order when null) and filter.
+	let songSort = $state<{ column: SongColumn; desc: boolean } | null>(null);
+	let songFilter = $state<'' | 'singletons' | 'on_album'>('');
 	let loadingMore = $state(false);
 	let error = $state<string | null>(null);
 
@@ -104,10 +111,12 @@
 		error = null;
 		try {
 			if (grouping === 'song') {
-				const result = await api.items(query, 0, SONG_PAGE);
+				const result = await api.items(query, 0, SONG_PAGE, songOrder());
 				if (current === generation) songs = result;
 			} else {
-				const result = await api.albums(query, grouping satisfies AlbumOrder, 0, 100, problem);
+				const result = withTracks()
+					? await api.artists(query, 0, 100)
+					: await api.albums(query, grouping satisfies AlbumOrder, 0, 100, problem);
 				if (current === generation) page = result;
 			}
 		} catch (e) {
@@ -121,18 +130,39 @@
 		query: string;
 		grouping: Grouping;
 		problem: HealthCheck | 'any' | '';
-		page: Page<Album> | null;
+		page: AlbumPage | null;
 		songs: Page<Item> | null;
+		songSort?: typeof songSort;
+		songFilter?: typeof songFilter;
 	}> = {
-		capture: () => $state.snapshot({ query, grouping, problem, page, songs }),
+		capture: () => $state.snapshot({ query, grouping, problem, page, songs, songSort, songFilter }),
 		restore: (saved) => {
 			generation++;
 			loadingMore = false;
 			loadingMore = false;
 			({ query, grouping, page, songs } = saved);
 			problem = saved.problem ?? '';
+			songSort = saved.songSort ?? null;
+			songFilter = saved.songFilter ?? '';
 		}
 	};
+
+	function songOrder() {
+		return { sort: songSort?.column, desc: songSort?.desc, only: songFilter };
+	}
+
+	/** Sort by a column; clicking it again reverses the order. */
+	function sortSongs(column: SongColumn) {
+		songSort = { column, desc: songSort?.column === column && !songSort.desc };
+		search();
+	}
+
+	const songColumns: { column: SongColumn; label: string; class?: string }[] = [
+		{ column: 'track', label: '#', class: 'num' },
+		{ column: 'title', label: 'Title' },
+		{ column: 'artist', label: 'Artist' },
+		{ column: 'album', label: 'Album', class: 'album' }
+	];
 
 	/** Show only the albums with a problem, e.g. from the health details. */
 	function showProblem(check: HealthCheck | 'any') {
@@ -150,11 +180,13 @@
 		loadingMore = true;
 		try {
 			if (grouping === 'song' && songs) {
-				const next = await api.items(query, songs.results.length, SONG_PAGE);
+				const next = await api.items(query, songs.results.length, SONG_PAGE, songOrder());
 				if (current === generation)
 					songs = { ...next, results: [...songs.results, ...next.results] };
 			} else if (grouping !== 'song' && page) {
-				const next = await api.albums(query, grouping, page.results.length, page.limit, problem);
+				const next: AlbumPage = withTracks()
+					? await api.artists(query, page.results.length, page.limit)
+					: await api.albums(query, grouping, page.results.length, page.limit, problem);
 				if (current === generation) page = { ...next, results: [...page.results, ...next.results] };
 			}
 		} catch (e) {
@@ -167,17 +199,44 @@
 
 	const shown = $derived(grouping === 'song' ? songs : page);
 
-	// The loaded albums in runs that share an artist heading; the server sorts them by artist.
+	/** The artists view lists tracks on no album too; health checks are about albums only. */
+	function withTracks() {
+		return grouping === 'artist' && !problem;
+	}
+
+	function isTrack(row: Album | ArtistRow): row is Item & { kind: 'track' } {
+		return row.kind === 'track';
+	}
+
+	const shownAlbums = $derived((page?.results ?? []).filter((r) => !isTrack(r)));
+
+	// The loaded rows in runs that share an artist heading; the server sorts them by artist, each
+	// artist's albums before their loose tracks.
 	const groups = $derived.by(() => {
-		const albums = page?.results ?? [];
-		if (grouping !== 'artist') return [{ name: '', albums }];
-		const runs: { name: string; albums: Album[] }[] = [];
-		for (const album of albums) {
-			const name = album.albumartist || 'Unknown artist';
-			if (runs.at(-1)?.name === name) runs.at(-1)!.albums.push(album);
-			else runs.push({ name, albums: [album] });
+		const rows = page?.results ?? [];
+		if (grouping !== 'artist') return [{ name: '', albums: rows as Album[], tracks: [] }];
+		const runs: { name: string; albums: Album[]; tracks: Item[] }[] = [];
+		for (const row of rows) {
+			const name = (isTrack(row) ? row.artist : row.albumartist) || 'Unknown artist';
+			let run = runs.at(-1);
+			// The server's sort ignores case, so runs do too.
+			if (run?.name.toLowerCase() !== name.toLowerCase()) {
+				run = { name, albums: [], tracks: [] };
+				runs.push(run);
+			}
+			if (isTrack(row)) run.tracks.push(row);
+			else run.albums.push(row);
 		}
 		return runs;
+	});
+
+	/** What the view lists: "12 albums", or "12 albums · 3 loose tracks" with tracks on no album. */
+	const count = $derived.by(() => {
+		if (!shown) return '';
+		if (grouping === 'song') return plural(shown.total, 'song');
+		if (page?.tracks == null) return plural(shown.total, 'album');
+		const albums = plural(page.albums ?? 0, 'album');
+		return page.tracks ? `${albums} · ${plural(page.tracks, 'loose track')}` : albums;
 	});
 
 	async function openUpdate() {
@@ -246,7 +305,18 @@
 			>
 		{/each}
 	</div>
-	{#if grouping !== 'song'}
+	{#if grouping === 'song'}
+		<select
+			bind:value={songFilter}
+			onchange={search}
+			aria-label="Show songs"
+			class:active={songFilter}
+		>
+			<option value="">All songs</option>
+			<option value="singletons">Not on an album</option>
+			<option value="on_album">On an album</option>
+		</select>
+	{:else}
 		<select bind:value={problem} onchange={search} aria-label="Show albums" class:active={problem}>
 			<option value="">All albums</option>
 			<option value="any">With problems</option>
@@ -255,17 +325,16 @@
 			{/each}
 		</select>
 	{/if}
-	{#if shown}<span class="meta">{plural(shown.total, grouping === 'song' ? 'song' : 'album')}</span
-		>{/if}
+	{#if shown}<span class="meta">{count}</span>{/if}
 	<div class="selection">
 		{#if selecting}
 			<span class="meta">{selected.length} selected</span>
 			<button
 				type="button"
 				onclick={() =>
-					(selected =
-						(grouping === 'song' ? songs?.results : page?.results)?.map((r) => r.id) ?? [])}
-				>Select all shown</button
+					(selected = (grouping === 'song' ? (songs?.results ?? []) : shownAlbums).map(
+						(r) => r.id
+					))}>Select all shown</button
 			>
 			<button type="button" disabled={!selected.length} onclick={() => (bulkEditing = true)}
 				>Edit…</button
@@ -327,10 +396,24 @@
 			<thead>
 				<tr>
 					{#if selecting}<th class="check"></th>{/if}
-					<th class="num">#</th>
-					<th>Title</th>
-					<th>Artist</th>
-					<th class="album">Album</th>
+					{#each songColumns as c (c.column)}
+						<th
+							class={c.class}
+							aria-sort={songSort?.column === c.column
+								? songSort.desc
+									? 'descending'
+									: 'ascending'
+								: undefined}
+						>
+							<button type="button" class="sort" onclick={() => sortSongs(c.column)}
+								>{c.label}{songSort?.column === c.column
+									? songSort.desc
+										? ' ▼'
+										: ' ▲'
+									: ''}</button
+							>
+						</th>
+					{/each}
 					<th class="num year">Year</th>
 					<th class="num">Time</th>
 				</tr>
@@ -366,41 +449,58 @@
 	{#each groups as group, i (i)}
 		<section>
 			{#if group.name}<h2>{group.name}</h2>{/if}
-			<ul class="grid">
-				{#each group.albums as album (album.id)}
-					<li>
-						<a
-							href="/albums/{album.id}"
-							class:selected={selected.includes(album.id)}
-							onclick={(e) => {
-								if (!selecting) return;
-								e.preventDefault();
-								toggle(album.id);
-							}}
-						>
-							<div class="cover">
-								{#if selecting}
-									<input
-										class="pick"
-										type="checkbox"
-										tabindex="-1"
-										checked={selected.includes(album.id)}
-										aria-hidden="true"
+			{#if group.albums.length}
+				<ul class="grid">
+					{#each group.albums as album (album.id)}
+						<li>
+							<a
+								href="/albums/{album.id}"
+								class:selected={selected.includes(album.id)}
+								onclick={(e) => {
+									if (!selecting) return;
+									e.preventDefault();
+									toggle(album.id);
+								}}
+							>
+								<div class="cover">
+									{#if selecting}
+										<input
+											class="pick"
+											type="checkbox"
+											tabindex="-1"
+											checked={selected.includes(album.id)}
+											aria-hidden="true"
+										/>
+									{/if}
+									<img
+										src={api.artUrl(album.id, artVersion)}
+										alt=""
+										loading="lazy"
+										onerror={(e) => e.currentTarget.remove()}
 									/>
-								{/if}
-								<img
-									src={api.artUrl(album.id, artVersion)}
-									alt=""
-									loading="lazy"
-									onerror={(e) => e.currentTarget.remove()}
-								/>
-							</div>
-							<strong>{album.album}</strong>
-							<span>{album.albumartist}{album.year ? ` · ${album.year}` : ''}</span>
-						</a>
-					</li>
-				{/each}
-			</ul>
+								</div>
+								<strong>{album.album}</strong>
+								<span>{album.albumartist}{album.year ? ` · ${album.year}` : ''}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if group.tracks.length}
+				<table class="songs loose">
+					<caption>Not on an album</caption>
+					<tbody>
+						{#each group.tracks as song (song.id)}
+							<tr title={song.path ?? undefined}>
+								<td><a href="/songs/{song.id}">{song.title || 'Untitled'}</a></td>
+								<td class="album">{song.album}</td>
+								<td class="num year">{song.year || ''}</td>
+								<td class="num">{formatLength(song.length)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			{/if}
 		</section>
 	{/each}
 {/if}
@@ -574,6 +674,25 @@
 	}
 	.songs .check {
 		width: 2rem;
+	}
+	button.sort {
+		all: unset;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	button.sort:hover,
+	button.sort:focus-visible {
+		text-decoration: underline;
+	}
+	/* An artist's tracks on no album, under their albums. */
+	.songs.loose {
+		margin-top: 0.75rem;
+	}
+	.songs caption {
+		text-align: left;
+		font-size: 0.85em;
+		opacity: 0.6;
+		padding: 0 0.5rem 0.25rem;
 	}
 	.songs tr.selected {
 		background: color-mix(in srgb, var(--accent) 12%, transparent);

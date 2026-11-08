@@ -57,12 +57,25 @@ export interface AlbumEdit {
 
 export type AlbumOrder = 'default' | 'artist' | 'album';
 
+export type SongColumn = 'track' | 'title' | 'artist' | 'album';
+export interface SongOrder {
+	sort?: SongColumn | null;
+	desc?: boolean;
+	only?: 'singletons' | 'on_album' | '';
+}
+
 export interface Page<T> {
 	total: number;
 	offset: number;
 	limit: number;
 	results: T[];
 }
+
+/** A row of the artist view: an album, or a track on no album. */
+export type ArtistRow = (Album & { kind: 'album' }) | (Item & { kind: 'track' });
+
+/** The artist view's page also counts its albums and loose tracks apart. */
+export type ArtistPage = Page<ArtistRow> & { albums: number; tracks: number };
 
 async function get<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
 	const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
@@ -79,9 +92,19 @@ export const api = {
 	albums: (q = '', order: AlbumOrder = 'default', offset = 0, limit = 100, problem = '') =>
 		get<Page<Album>>('/albums', { q, order, offset, limit, ...(problem && { problem }) }),
 	album: (id: number) => get<AlbumDetail>(`/albums/${id}`),
+	/** Albums and the tracks on no album, by artist. */
+	artists: (q = '', offset = 0, limit = 100) => get<ArtistPage>('/artists', { q, offset, limit }),
 	/** Like `beet modify`: changed fields as strings; album fields also apply to its tracks. */
 	editAlbum: (id: number, edit: AlbumEdit) => post<AlbumDetail>(`/albums/${id}`, edit, 'PATCH'),
-	items: (q = '', offset = 0, limit = 100) => get<Page<Item>>('/items', { q, offset, limit }),
+	/** `sort` orders by a column instead of beets' default; `only` keeps tracks on no album or on one. */
+	items: (q = '', offset = 0, limit = 100, { sort, desc, only }: SongOrder = {}) =>
+		get<Page<Item>>('/items', {
+			q,
+			offset,
+			limit,
+			...(sort && { sort, desc: String(Boolean(desc)) }),
+			...(only && { only })
+		}),
 	item: (id: number) => get<Item & { can_refresh: boolean }>(`/items/${id}`),
 	/** Like `beet remove -a`, with -d when `deleteFiles`: the album and its tracks go. */
 	deleteAlbum: (id: number, deleteFiles: boolean) =>

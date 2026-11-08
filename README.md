@@ -189,6 +189,8 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
 ## Roadmap
 
 - [x] Browse/search albums and items using beets query syntax
+- [x] Artists view lists each artist's tracks on no album under their albums; the songs view sorts
+      by track, title, artist or album and filters to tracks on no album (or on one)
 - [x] Edit an album's metadata from its page, mirroring `beet modify` (`PATCH /api/albums/{id}`)
 - [x] Song pages: edit a track (and re-import a single track); bulk edits on selected albums or songs
 - [x] Album art: fetch (fetchart), upload, save a folder image or embedded art as the art file, embed

@@ -11,6 +11,26 @@ def test_list_albums(client):
     assert body["results"][0]["album"] == "OK Computer"
 
 
+def test_artist_view_lists_loose_tracks_with_their_artist(client, lib):
+    (album,) = lib.albums()
+    album.albumartist = "Radiohead"
+    album.store()
+    lib.add(Item(title="Airbag", artist="radiohead", path=b"/music/airbag.mp3"))
+    body = client.get("/api/artists").json()
+    rows = [
+        (r["kind"], r.get("album") if r["kind"] == "album" else r["title"]) for r in body["results"]
+    ]
+    assert rows == [
+        ("track", "Loose Track"),  # Portishead
+        ("album", "OK Computer"),  # Radiohead: albums first, then loose tracks
+        ("track", "Airbag"),
+    ]
+    assert (body["total"], body["albums"], body["tracks"]) == (3, 1, 2)
+
+    body = client.get("/api/artists", params={"q": "radiohead", "offset": 1}).json()
+    assert [r["kind"] for r in body["results"]] == ["track"]
+
+
 def test_album_detail_includes_items(client):
     album_id = client.get("/api/albums").json()["results"][0]["id"]
     body = client.get(f"/api/albums/{album_id}").json()
@@ -22,6 +42,19 @@ def test_item_query(client):
     body = client.get("/api/items", params={"q": "artist:portishead"}).json()
     assert body["total"] == 1
     assert body["results"][0]["title"] == "Loose Track"
+
+
+def test_songs_sort_and_filter(client):
+    def titles(**params):
+        return [r["title"] for r in client.get("/api/items", params=params).json()["results"]]
+
+    assert titles(sort="title") == ["Loose Track", "Track 1", "Track 2", "Track 3"]
+    assert titles(sort="title", desc=True) == ["Track 3", "Track 2", "Track 1", "Loose Track"]
+    assert titles(sort="track", desc=True)[:3] == ["Track 3", "Track 2", "Track 1"]
+    assert titles(only="singletons") == ["Loose Track"]
+    assert titles(only="on_album", sort="title", desc=True) == ["Track 3", "Track 2", "Track 1"]
+    assert titles(q="radiohead", only="singletons") == []
+    assert client.get("/api/items", params={"sort": "path"}).status_code == 422
 
 
 def test_pagination(client):
