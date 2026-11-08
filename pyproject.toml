@@ -1,6 +1,6 @@
 [project]
 name = "beets-webui"
-version = "2.14.3"  # <beets major.minor>.<release>: see README
+version = "2.14.4"  # <beets major.minor>.<release>: see README
 description = "A web UI for the beets music library manager"
 readme = "README.md"
 requires-python = ">=3.10"
