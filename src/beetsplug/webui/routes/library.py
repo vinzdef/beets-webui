@@ -53,44 +53,16 @@ def paginate(results, offset: int, limit: int) -> dict[str, Any]:
     return {"total": len(results), "offset": offset, "limit": limit, "results": rows}
 
 
-def album_folders(lib: Library) -> dict[int, str]:
-    """Each album's folder, relative to the library folder when it's inside it."""
-    root = util.displayable_path(lib.directory)
-    with lib.transaction() as tx:
-        rows = tx.query(
-            "SELECT album_id, MIN(path) FROM items WHERE album_id IS NOT NULL GROUP BY album_id"
-        )
-    folders = {}
-    for album_id, path in rows:
-        folder = os.path.dirname(util.displayable_path(path))
-        if folder.startswith(root.rstrip(os.sep) + os.sep):
-            folder = os.path.relpath(folder, root)
-        folders[album_id] = folder
-    return folders
-
-
 @router.get("/albums")
 def list_albums(
     request: Request,
     q: str = Query("", description="beets query string, e.g. 'artist:radiohead year:1997'"),
-    order: Literal["default", "artist", "album", "path"] = "default",
+    order: Literal["default", "artist", "album"] = "default",
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
 ):
-    lib = get_lib(request)
-    albums = lib.albums(f"{q} {ALBUM_ORDER.get(order, '')}".strip())
-    folders = album_folders(lib)
-    if order == "path":
-        # By parent folder first, so the albums under one folder heading stay together.
-        def folder_key(album):
-            folder = folders.get(album.id, "").lower()
-            return os.path.dirname(folder), folder
-
-        albums = sorted(albums, key=folder_key)
-    page = paginate(albums, offset, limit)
-    for album in page["results"]:
-        album["folder"] = folders.get(album["id"])
-    return page
+    albums = get_lib(request).albums(f"{q} {ALBUM_ORDER.get(order, '')}".strip())
+    return paginate(albums, offset, limit)
 
 
 @router.get("/albums/{album_id}")

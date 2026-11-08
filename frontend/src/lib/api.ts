@@ -15,8 +15,6 @@ export interface Album {
 	albumartist: string;
 	year: number;
 	artpath: string | null;
-	/** The album's folder, relative to the library folder when it's inside it. */
-	folder: string | null;
 	[field: string]: unknown;
 }
 
@@ -27,7 +25,7 @@ export interface AlbumEdit {
 	items?: Record<number, Record<string, string>>;
 }
 
-export type AlbumOrder = 'default' | 'artist' | 'album' | 'path';
+export type AlbumOrder = 'default' | 'artist' | 'album';
 
 export interface Page<T> {
 	total: number;

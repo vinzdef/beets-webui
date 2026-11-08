@@ -53,12 +53,6 @@ def test_update_refuses_without_library_folder(client, lib, tmp_path):
     assert client.get("/api/items").json()["total"] == 4
 
 
-def test_albums_carry_their_folder(client, lib):
-    lib.directory = b"/music"
-    body = client.get("/api/albums", params={"order": "path"}).json()
-    assert body["results"][0]["folder"] == "ok-computer"
-
-
 def test_album_art_falls_back_to_folder_image(client, lib, tmp_path):
     album = lib.albums().get()
     folder = tmp_path / "ok-computer"

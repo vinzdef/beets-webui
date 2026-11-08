@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { Snapshot } from './$types';
 	import {
 		api,
 		formatLength,
@@ -11,11 +12,10 @@
 	} from '$lib/api';
 
 	// 'song' lists tracks instead of albums.
-	type Grouping = 'album' | 'artist' | 'path' | 'song';
+	type Grouping = 'album' | 'artist' | 'song';
 	const groupings: { value: Grouping; label: string }[] = [
 		{ value: 'album', label: 'Albums' },
 		{ value: 'artist', label: 'Artists' },
-		{ value: 'path', label: 'Folders' },
 		{ value: 'song', label: 'Songs' }
 	];
 
@@ -52,15 +52,40 @@
 		search();
 	}
 
+	// Bumped by each search and by restoring a snapshot, so a slower earlier search can't
+	// overwrite newer results.
+	let generation = 0;
+
 	async function search() {
+		const current = ++generation;
 		error = null;
 		try {
-			if (grouping === 'song') songs = await api.items(query, 0, SONG_PAGE);
-			else page = await api.albums(query, grouping satisfies AlbumOrder);
+			if (grouping === 'song') {
+				const result = await api.items(query, 0, SONG_PAGE);
+				if (current === generation) songs = result;
+			} else {
+				const result = await api.albums(query, grouping satisfies AlbumOrder);
+				if (current === generation) page = result;
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (current === generation) error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	// Coming back to the library (e.g. from an album) brings back the search, the view, the
+	// loaded results and, since they're there straight away, the scroll position.
+	export const snapshot: Snapshot<{
+		query: string;
+		grouping: Grouping;
+		page: Page<Album> | null;
+		songs: Page<Item> | null;
+	}> = {
+		capture: () => $state.snapshot({ query, grouping, page, songs }),
+		restore: (saved) => {
+			generation++;
+			({ query, grouping, page, songs } = saved);
+		}
+	};
 
 	// Rows are short, so songs load in bigger pages than album covers.
 	const SONG_PAGE = 500;
@@ -82,22 +107,15 @@
 		}
 	}
 
-	function groupOf(album: Album): string {
-		if (grouping === 'artist') return album.albumartist || 'Unknown artist';
-		const folder = album.folder ?? '';
-		const slash = folder.lastIndexOf('/');
-		return slash > 0 ? folder.slice(0, slash) : 'Library folder';
-	}
-
-	// The loaded albums in runs that share a heading; the server sorts them so each run is whole.
 	const shown = $derived(grouping === 'song' ? songs : page);
 
+	// The loaded albums in runs that share an artist heading; the server sorts them by artist.
 	const groups = $derived.by(() => {
 		const albums = page?.results ?? [];
-		if (grouping === 'album' || grouping === 'song') return [{ name: '', albums }];
+		if (grouping !== 'artist') return [{ name: '', albums }];
 		const runs: { name: string; albums: Album[] }[] = [];
 		for (const album of albums) {
-			const name = groupOf(album);
+			const name = album.albumartist || 'Unknown artist';
 			if (runs.at(-1)?.name === name) runs.at(-1)!.albums.push(album);
 			else runs.push({ name, albums: [album] });
 		}
@@ -207,7 +225,7 @@
 			<ul class="grid">
 				{#each group.albums as album (album.id)}
 					<li>
-						<a href="/albums/{album.id}" title={album.folder ?? undefined}>
+						<a href="/albums/{album.id}">
 							<div class="cover">
 								<img
 									src={api.artUrl(album.id)}
