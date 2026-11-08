@@ -93,9 +93,9 @@
 	</header>
 
 	<div class="actions">
-		{#if question.candidates[0]}
-			<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: 0 })}>
-				Apply {formatSimilarity(question.candidates[0])}% match
+		{#if candidate}
+			<button class="primary" onclick={() => onanswer({ type: 'apply', candidate: selected })}>
+				Apply {formatSimilarity(candidate)}% match
 			</button>
 		{/if}
 		{#each actions as choice (choice.short)}
