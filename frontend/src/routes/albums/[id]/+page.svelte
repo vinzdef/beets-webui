@@ -4,6 +4,7 @@
 	import {
 		api,
 		fieldText as text,
+		formatLength,
 		imports,
 		type AlbumDetail,
 		type AlbumEdit,
@@ -153,11 +154,6 @@
 		const file = input.files?.[0];
 		input.value = '';
 		if (file) artAction(() => api.uploadArt(album!.id, file), 'Uploaded the cover.');
-	}
-
-	function duration(seconds: number) {
-		const s = Math.round(seconds);
-		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 	}
 
 	function trackNumber(item: Item) {
@@ -328,7 +324,7 @@
 						<td class="num">{trackNumber(item)}</td>
 						<td><a href="/songs/{item.id}">{item.title}</a></td>
 						<td>{item.artist}</td>
-						<td class="num">{duration(item.length)}</td>
+						<td class="num">{formatLength(item.length)}</td>
 					</tr>
 				{/each}
 			</tbody>

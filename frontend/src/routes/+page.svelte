@@ -141,17 +141,20 @@
 	const SONG_PAGE = 500;
 
 	async function loadMore() {
+		// A search that starts meanwhile makes these results stale: they're then dropped.
+		const current = generation;
 		loadingMore = true;
 		try {
 			if (grouping === 'song' && songs) {
 				const next = await api.items(query, songs.results.length, SONG_PAGE);
-				songs = { ...next, results: [...songs.results, ...next.results] };
+				if (current === generation)
+					songs = { ...next, results: [...songs.results, ...next.results] };
 			} else if (grouping !== 'song' && page) {
 				const next = await api.albums(query, grouping, page.results.length, page.limit, problem);
-				page = { ...next, results: [...page.results, ...next.results] };
+				if (current === generation) page = { ...next, results: [...page.results, ...next.results] };
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			if (current === generation) error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loadingMore = false;
 		}

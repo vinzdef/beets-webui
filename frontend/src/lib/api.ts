@@ -257,6 +257,8 @@ export interface MatchQuestion {
 	recommendation: string;
 	candidates: Candidate[];
 	choices: { short: string; long: string }[];
+	/** Whether beets numbers tracks per disc (else across the whole release). */
+	per_disc_numbering: boolean;
 }
 
 export interface DuplicateQuestion {
@@ -323,7 +325,10 @@ export type AnswerBody =
 			/** Files paired with tracks by hand: path -> track `pos`, or null if not on the release. */
 			mapping?: Record<string, number | null>;
 			/** Title and track number for kept files the release doesn't have, by path. */
-			extra_tags?: Record<string, { title: string | null; track: number | null }>;
+			extra_tags?: Record<
+				string,
+				{ title: string | null; track: number | null; disc?: number | null }
+			>;
 	  }
 	| { type: 'choice'; short: string }
 	| { type: 'search'; artist: string; name: string }

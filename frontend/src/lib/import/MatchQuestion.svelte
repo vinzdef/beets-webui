@@ -73,9 +73,9 @@
 			: {}
 	);
 	let pairing = $state<Record<string, number | null>>({});
-	// Title and track number for files the release doesn't have, as chosen; an empty track
-	// means the default, after the release's last track.
-	let extraTags = $state<Record<string, { title: string; track: string }>>({});
+	// Title, disc and track number for files the release doesn't have, as chosen; an empty disc
+	// or track means the default: the last disc, after its last track.
+	let extraTags = $state<Record<string, { title: string; disc: string; track: string }>>({});
 
 	// Each candidate starts from beets' own pairing and the files' own tags; fresh copies of the
 	// same question (see above) keep what you've changed.
@@ -85,7 +85,9 @@
 		if (key === pairedFor) return;
 		pairedFor = key;
 		pairing = { ...ownPairing };
-		extraTags = Object.fromEntries(files.map((f) => [f.path, { title: f.title ?? '', track: '' }]));
+		extraTags = Object.fromEntries(
+			files.map((f) => [f.path, { title: f.title ?? '', disc: '', track: '' }])
+		);
 	});
 
 	const pairedByHand = $derived(
@@ -108,36 +110,89 @@
 		pairing = next;
 	}
 
-	// The release's highest track number: kept files go after it unless you pick otherwise.
-	const lastTrack = $derived(Math.max(0, ...releaseTracks.map((t) => trackNumber(t) ?? 0)));
-	// Numbers to choose from: the release's, then one more for each kept file.
-	const trackChoices = $derived(
-		Array.from({ length: lastTrack + unpaired.length }, (_, i) => i + 1)
-	);
-	const takenBy = $derived(
-		new Map(releaseTracks.map((t) => [trackNumber(t), t.title ?? `track ${trackNumber(t)}`]))
-	);
+	/** The track number beets writes: per disc with per_disc_numbering, else across the release. */
+	function trackNumber(track: ImportTrack): number {
+		return (question.per_disc_numbering ? track.medium_index : track.index) ?? track.index ?? 0;
+	}
+
+	function discOf(track: ImportTrack): number {
+		return track.medium ?? 1;
+	}
+
+	const discs = $derived([...new Set(releaseTracks.map(discOf))].sort((a, b) => a - b));
+	const multiDisc = $derived(discs.length > 1);
+
+	/** The disc a kept file goes on: as chosen, else the release's last. */
+	function keptDisc(file: ImportItem): number {
+		const chosen = extraTags[file.path]?.disc;
+		return chosen ? Number(chosen) : (discs.at(-1) ?? 1);
+	}
+
+	// Track numbers count per disc or across the release; kept files fit into the same scheme.
+	function numberingKey(disc: number, n: number) {
+		return question.per_disc_numbering ? `${disc}:${n}` : String(n);
+	}
+
+	/** The highest number the release uses where a kept file on `disc` is numbered. */
+	function lastNumber(disc: number): number {
+		const counted = question.per_disc_numbering
+			? releaseTracks.filter((t) => discOf(t) === disc)
+			: releaseTracks;
+		return Math.max(0, ...counted.map(trackNumber));
+	}
+
+	/** Kept files numbered alongside this one (on its disc, or all of them). */
+	function keptAlongside(file: ImportItem): ImportItem[] {
+		return question.per_disc_numbering
+			? unpaired.filter((f) => keptDisc(f) === keptDisc(file))
+			: unpaired;
+	}
 
 	/** The track number a kept file ends up with: as chosen, or next after the release's tracks. */
 	function keptNumber(file: ImportItem): number {
 		const chosen = extraTags[file.path]?.track;
-		return chosen ? Number(chosen) : lastTrack + unpaired.indexOf(file) + 1;
+		if (chosen) return Number(chosen);
+		return lastNumber(keptDisc(file)) + keptAlongside(file).indexOf(file) + 1;
+	}
+
+	const takenBy = $derived(
+		new Map(
+			releaseTracks.map((t) => [
+				numberingKey(discOf(t), trackNumber(t)),
+				t.title ?? `track ${trackNumber(t)}`
+			])
+		)
+	);
+
+	/** Numbers to offer a kept file: the release's, one more per kept file, and its current one. */
+	function numberChoices(file: ImportItem): number[] {
+		const max = Math.max(lastNumber(keptDisc(file)) + keptAlongside(file).length, keptNumber(file));
+		return Array.from({ length: max }, (_, i) => i + 1);
+	}
+
+	/** What else ends up with a kept file's number, if anything. */
+	function sameNumberAs(file: ImportItem, n: number): string | undefined {
+		return takenBy.get(numberingKey(keptDisc(file), n));
 	}
 
 	/** Whether another kept file, or a track on the release, ends up with the same number. */
 	function numberClashes(file: ImportItem): boolean {
-		const n = keptNumber(file);
-		return takenBy.has(n) || unpaired.some((f) => f !== file && keptNumber(f) === n);
+		const key = numberingKey(keptDisc(file), keptNumber(file));
+		return (
+			takenBy.has(key) ||
+			unpaired.some((f) => f !== file && numberingKey(keptDisc(f), keptNumber(f)) === key)
+		);
 	}
 
 	function apply() {
-		// Kept files get the number shown, and a title only when it was changed.
-		const tags: Record<string, { title: string | null; track: number | null }> = {};
+		// Kept files get the disc and number shown, and a title only when it was changed.
+		const tags: Record<string, { title: string | null; track: number; disc: number }> = {};
 		for (const f of unpaired) {
 			const title = extraTags[f.path].title;
 			tags[f.path] = {
 				title: title !== (f.title ?? '') ? title || null : null,
-				track: keptNumber(f)
+				track: keptNumber(f),
+				disc: keptDisc(f)
 			};
 		}
 		onanswer({
@@ -172,17 +227,27 @@
 	type TrackRow = { item: ImportItem | null; track: ImportTrack };
 	type Row = TrackRow | { item: ImportItem; track: null };
 
-	// The release's tracklist in order, each track with the file paired with it (or missing),
-	// followed by files that aren't on the release.
-	const rows = $derived.by((): Row[] => {
+	// The release's tracklist by disc, each track with the file paired with it (or missing). Kept
+	// files go on the disc they'll get, in number order; files that won't be imported come last.
+	const sections = $derived.by((): { disc: number | null; rows: Row[] }[] => {
 		const byPos = new Map(
 			files.filter((f) => pairing[f.path] != null).map((f) => [pairing[f.path], f])
 		);
-		const tracklist: TrackRow[] = releaseTracks.map((track) => ({
-			item: byPos.get(track.pos) ?? null,
-			track
-		}));
-		return [...tracklist, ...unpaired.map((item) => ({ item, track: null }))];
+		const out = discs.map((disc) => {
+			const rows: Row[] = releaseTracks
+				.filter((t) => discOf(t) === disc)
+				.map((track) => ({ item: byPos.get(track.pos) ?? null, track }));
+			if (keepUnmatched) {
+				const kept = unpaired.filter((f) => keptDisc(f) === disc);
+				kept.sort((a, b) => keptNumber(a) - keptNumber(b));
+				rows.push(...kept.map((item) => ({ item, track: null })));
+			}
+			return { disc: disc as number | null, rows };
+		});
+		if (!keepUnmatched && unpaired.length) {
+			out.push({ disc: null, rows: unpaired.map((item) => ({ item, track: null })) });
+		}
+		return out;
 	});
 
 	/** Colour for a length difference; beets itself tolerates up to 10 seconds. */
@@ -190,10 +255,6 @@
 		if (a == null || b == null) return '';
 		const diff = Math.abs(a - b);
 		return diff > 10 ? 'bad' : diff > 3 ? 'warn' : '';
-	}
-
-	function trackNumber(track: ImportTrack) {
-		return track.medium_index ?? track.index;
 	}
 
 	/**
@@ -296,98 +357,122 @@
 									<th class="num">Length</th>
 								</tr>
 							</thead>
-							<tbody>
-								{#each rows as { item, track }}
-									<tr class:missing={!item} class:unmatched={!track}>
-										{#if track}
-											<td
-												class="num"
-												class:warn={numberDiffers(item, track)}
-												title={numberDiffers(item, track)
-													? `Your file says track ${item?.track}`
-													: undefined}
-											>
-												{trackNumber(track)}
-											</td>
-										{:else if item && keepUnmatched}
-											<td class="num" class:warn={numberClashes(item)}>
-												<select
-													class="number"
-													value={String(keptNumber(item))}
-													aria-label="Track number after import"
-													title={numberClashes(item)
-														? 'Another track ends up with this number too'
-														: 'The track number this file gets'}
-													onchange={(e) => (extraTags[item.path].track = e.currentTarget.value)}
+							{#each sections as section (section.disc)}
+								<tbody>
+									{#if section.disc === null}
+										<tr class="section"><th colspan="6">Not on this release</th></tr>
+									{:else if multiDisc}
+										<tr class="section"><th colspan="6">Disc {section.disc}</th></tr>
+									{/if}
+									{#each section.rows as { item, track }}
+										<tr class:missing={!item} class:unmatched={!track}>
+											{#if track}
+												<td
+													class="num"
+													class:warn={numberDiffers(item, track)}
+													title={numberDiffers(item, track)
+														? `Your file says track ${item?.track}`
+														: undefined}
 												>
-													{#each trackChoices as n (n)}
-														<option value={String(n)}
-															>{n}{takenBy.has(n)
-																? ` · same as ${takenBy.get(n)}`
-																: n === item.track
-																	? ' (in its tags)'
-																	: ''}</option
-														>
-													{/each}
-												</select>
-											</td>
-										{:else}
-											<td class="num">{item?.track || ''}</td>
-										{/if}
-										{#if item && !track && keepUnmatched}
-											<td>
-												<input
-													class="tag"
-													bind:value={extraTags[item.path].title}
-													placeholder={item.path.split('/').pop()}
-													aria-label="Title"
-												/>
-											</td>
-											<td class="num">{formatLength(item.length)}</td>
-										{:else if item}
-											<td title={item.path.split('/').pop()}>
-												{item.title || item.path.split('/').pop()}
-											</td>
-											<td class="num">{formatLength(item.length)}</td>
-										{:else}
-											<td class="bad">missing from your files</td>
-											<td class="num"></td>
-										{/if}
-										<td class="arrow">→</td>
-										{#if item}
-											<td class:warn={track && changed(item.title, track.title)}>
-												<select
-													value={track?.pos ?? -1}
-													aria-label="Release track for {item.title || item.path}"
-													onchange={(e) => {
-														const pos = Number(e.currentTarget.value);
-														pair(item.path, pos < 0 ? null : pos);
-													}}
-												>
-													{#each releaseTracks as t (t.pos)}
-														<option value={t.pos}>{trackNumber(t)}. {t.title}</option>
-													{/each}
-													<option value={-1}>Not on this release</option>
-												</select>
-												{#if !track}
-													<small class={keepUnmatched ? 'warn' : 'bad'}>
-														{keepUnmatched ? 'kept with the album' : "won't be imported"}
-													</small>
-												{/if}
-											</td>
-										{:else}
-											<td>{track?.title}</td>
-										{/if}
-										{#if track}
-											<td class="num {item ? lengthClass(item.length, track.length) : ''}">
-												{formatLength(track.length)}
-											</td>
-										{:else}
-											<td class="num"></td>
-										{/if}
-									</tr>
-								{/each}
-							</tbody>
+													{trackNumber(track)}
+												</td>
+											{:else if item && keepUnmatched}
+												<td class="num" class:warn={numberClashes(item)}>
+													<select
+														class="number"
+														value={String(keptNumber(item))}
+														aria-label="Track number after import"
+														title={numberClashes(item)
+															? 'Another track ends up with this number too'
+															: 'The track number this file gets'}
+														onchange={(e) => (extraTags[item.path].track = e.currentTarget.value)}
+													>
+														{#each numberChoices(item) as n (n)}
+															<option value={String(n)}
+																>{n}{sameNumberAs(item, n)
+																	? ` · same as ${sameNumberAs(item, n)}`
+																	: n === item.track
+																		? ' (in its tags)'
+																		: ''}</option
+															>
+														{/each}
+													</select>
+												</td>
+											{:else}
+												<td class="num">{item?.track || ''}</td>
+											{/if}
+											{#if item && !track && keepUnmatched}
+												<td>
+													<input
+														class="tag"
+														bind:value={extraTags[item.path].title}
+														placeholder={item.path.split('/').pop()}
+														aria-label="Title"
+													/>
+												</td>
+												<td class="num">{formatLength(item.length)}</td>
+											{:else if item}
+												<td title={item.path.split('/').pop()}>
+													{item.title || item.path.split('/').pop()}
+												</td>
+												<td class="num">{formatLength(item.length)}</td>
+											{:else}
+												<td class="bad">missing from your files</td>
+												<td class="num"></td>
+											{/if}
+											<td class="arrow">→</td>
+											{#if item}
+												<td class:warn={track && changed(item.title, track.title)}>
+													<select
+														value={track?.pos ?? -1}
+														aria-label="Release track for {item.title || item.path}"
+														onchange={(e) => {
+															const pos = Number(e.currentTarget.value);
+															pair(item.path, pos < 0 ? null : pos);
+														}}
+													>
+														{#each releaseTracks as t (t.pos)}
+															<option value={t.pos}>{trackNumber(t)}. {t.title}</option>
+														{/each}
+														<option value={-1}>Not on this release</option>
+													</select>
+													{#if !track}
+														<small class={keepUnmatched ? 'warn' : 'bad'}>
+															{keepUnmatched ? 'kept with the album' : "won't be imported"}
+															{#if keepUnmatched && multiDisc}
+																on disc
+																<select
+																	class="disc"
+																	value={String(keptDisc(item))}
+																	aria-label="Disc after import"
+																	onchange={(e) => {
+																		extraTags[item.path].disc = e.currentTarget.value;
+																		// Its number restarts from the default on the new disc.
+																		extraTags[item.path].track = '';
+																	}}
+																>
+																	{#each discs as d (d)}
+																		<option value={String(d)}>{d}</option>
+																	{/each}
+																</select>
+															{/if}
+														</small>
+													{/if}
+												</td>
+											{:else}
+												<td>{track?.title}</td>
+											{/if}
+											{#if track}
+												<td class="num {item ? lengthClass(item.length, track.length) : ''}">
+													{formatLength(track.length)}
+												</td>
+											{:else}
+												<td class="num"></td>
+											{/if}
+										</tr>
+									{/each}
+								</tbody>
+							{/each}
 						</table>
 					{:else}
 						<dl>
@@ -555,6 +640,18 @@
 	td small {
 		display: block;
 		font-size: 0.8em;
+	}
+	select.disc {
+		width: auto;
+		padding: 0 0.15rem;
+		font-size: inherit;
+	}
+	tr.section th {
+		text-align: left;
+		font-weight: 600;
+		opacity: 1;
+		padding-top: 0.9rem;
+		border-bottom: 2px solid var(--line);
 	}
 	/* The closed dropdown shows just the number; the open list explains each one. */
 	select.number {
