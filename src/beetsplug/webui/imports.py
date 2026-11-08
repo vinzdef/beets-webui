@@ -7,9 +7,12 @@ question on the job and blocks until the browser answers it. See docs/interactiv
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -30,9 +33,43 @@ from beets.util import PromptChoice, displayable_path, syspath
 
 log = logging.getLogger("beets")
 
+# Entries the import page shows for the current job; the history file keeps all of them.
 LOG_LIMIT = 500
 # Short letters the built-in prompt uses for things that aren't PromptChoices here.
 RESERVED_SHORTS = {"a", "e", "i", "m"}
+
+
+class ImportHistory:
+    """Every import's log, one JSON object per line, kept across jobs and restarts."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._lock = threading.Lock()
+
+    def append(self, entry: dict[str, Any]) -> None:
+        line = json.dumps(entry, default=str)
+        with self._lock:
+            try:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except OSError:
+                log.exception("couldn't write the web UI's import log")
+
+    def read(self, offset: int, limit: int) -> tuple[int, list[dict[str, Any]]]:
+        """Entries newest first: the total, and those from `offset` on."""
+        with self._lock:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    lines = f.readlines()
+            except FileNotFoundError:
+                return 0, []
+        entries = []
+        for line in reversed(lines):
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                continue  # a line cut short by a crash
+        return len(entries), entries[offset : offset + limit]
 
 
 class ImportBusyError(Exception):
@@ -47,7 +84,9 @@ class ImportJob:
         options: dict[str, Any],
         on_change: Callable[[], None],
         query: str | None = None,
+        history: ImportHistory | None = None,
     ):
+        self.id = uuid.uuid4().hex[:12]
         self.paths = paths
         # A library query re-imports albums already in the library (`beet import -L`), in place.
         self.query = query
@@ -60,6 +99,7 @@ class ImportJob:
         self.question: dict[str, Any] | None = None
 
         self._on_change = on_change
+        self._history = history
         self._cond = threading.Condition()
         # Questions can come from different pipeline stages; ask them one at a time.
         self._ask_lock = threading.Lock()
@@ -94,8 +134,11 @@ class ImportJob:
             }
 
     def event(self, kind: str, message: str, **data: Any) -> None:
+        entry = {"time": time.time(), "kind": kind, "message": message, **data}
         with self._cond:
-            self.log.append({"time": time.time(), "kind": kind, "message": message, **data})
+            self.log.append(entry)
+        if self._history is not None:
+            self._history.append({"job": self.id, **entry})
         self._on_change()
 
     # Questions and answers
@@ -158,7 +201,12 @@ class ImportJob:
             session.logger.addHandler(handler)
             beets_log.addHandler(handler)
             verb = "Re-importing" if self.query is not None else "Importing"
-            self.event("started", f"{verb} {', '.join(self.paths)}")
+            self.event(
+                "started",
+                f"{verb} {', '.join(self.paths)}",
+                paths=self.paths,
+                reimport=self.query is not None,
+            )
             session.run()
             plugins.send("import", lib=self._lib, paths=session.paths)
             status = "aborted" if self._aborted else "done"
@@ -214,6 +262,10 @@ class ImportManager:
 
     def __init__(self, lib: Library):
         self.lib = lib
+        # Next to the library database, e.g. /config/webui-import-log.jsonl in the Docker image.
+        self.history = ImportHistory(
+            os.path.join(os.path.dirname(os.fsdecode(lib.path)), "webui-import-log.jsonl")
+        )
         self.job: ImportJob | None = None
         self.version = 0
         self._cond = threading.Condition()
@@ -225,7 +277,7 @@ class ImportManager:
         with self._cond:
             if self.job is not None and self.job.active:
                 raise ImportBusyError()
-            self.job = ImportJob(self.lib, paths, options, self._changed, query)
+            self.job = ImportJob(self.lib, paths, options, self._changed, query, self.history)
         self.job.start()
         self._changed()
         return self.job

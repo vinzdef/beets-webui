@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 import anyio
 import confuse
 from beets import config
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -117,6 +117,17 @@ def start_import(body: StartImport, manager: Manager):
     except ImportBusyError:
         raise HTTPException(409, "an import is already running") from None
     return job.snapshot()
+
+
+@router.get("/imports/log")
+def import_log(
+    manager: Manager,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(1000, ge=1, le=5000),
+):
+    """Every import's log entries, newest first; `job` tells the imports apart."""
+    total, entries = manager.history.read(offset, limit)
+    return {"total": total, "offset": offset, "limit": limit, "entries": entries}
 
 
 @router.get("/imports/current")

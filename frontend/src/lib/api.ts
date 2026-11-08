@@ -201,12 +201,17 @@ export interface ResumeQuestion {
 export type Question = MatchQuestion | DuplicateQuestion | ResumeQuestion;
 
 export interface LogEntry {
+	/** Which import the entry belongs to (in the full log). */
+	job?: string;
 	time: number;
 	kind: string;
 	message: string;
 	level?: string;
 	album_id?: number;
 	item_id?: number;
+	/** On "started" entries. */
+	paths?: string[];
+	reimport?: boolean;
 }
 
 export interface ImportJob {
@@ -273,6 +278,9 @@ export const imports = {
 	answer: (question: number, body: AnswerBody) =>
 		post('/imports/current/answer', { question, ...body }),
 	abort: () => post('/imports/current/abort'),
+	/** Every import's log entries, newest first. */
+	log: (offset = 0, limit = 1000) =>
+		get<{ total: number; entries: LogEntry[] }>('/imports/log', { offset, limit }),
 	/** Calls `onJob` with the current job (or null) now and whenever it changes. */
 	subscribe(onJob: (job: ImportJob | null) => void): () => void {
 		const source = new EventSource('/api/imports/current/events');

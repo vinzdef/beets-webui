@@ -259,7 +259,7 @@
 
 {#if job?.log.length}
 	<section>
-		<h2>Log</h2>
+		<h2>Log <a class="full" href="/log">Full log</a></h2>
 		<ol class="log">
 			{#each job.log.toReversed() as entry}
 				<li class="{entry.kind} {entry.level ?? ''}">
@@ -382,6 +382,13 @@
 	}
 	.error {
 		color: var(--bad);
+	}
+	h2 .full {
+		font-weight: normal;
+		font-size: 0.85em;
+		margin-left: 0.5rem;
+		color: inherit;
+		opacity: 0.7;
 	}
 	.log {
 		list-style: none;

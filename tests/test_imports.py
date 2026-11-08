@@ -539,3 +539,25 @@ def test_save_folder_image_keeps_it_in_place(client, lib, album):
     imported.load()
     assert imported.artpath == image
     assert not [f for f in os.listdir(folder) if f.startswith(b"cover")]
+
+
+def test_log_keeps_every_import(client, lib, album, tmp_path):
+    imported = imported_album(client, lib, album)
+    client.post("/api/imports", json={"album_id": imported.id}).raise_for_status()
+    answer(client, question(client), type="choice", short="s")
+    finished(client)
+
+    body = client.get("/api/imports/log").json()
+    entries = body["entries"]
+    assert body["total"] == len(entries)
+    # Newest first: the re-import, then the first import.
+    jobs = list(dict.fromkeys(e["job"] for e in entries))
+    assert len(jobs) == 2
+    first = [e for e in entries if e["job"] == jobs[1]]
+    assert first[-1]["kind"] == "started" and first[-1]["paths"] == [str(album)]
+    assert any(e["kind"] == "imported" and e["album_id"] == imported.id for e in first)
+    assert first[0]["kind"] == "done"
+    assert (tmp_path / "webui-import-log.jsonl").exists()
+
+    page = client.get("/api/imports/log", params={"offset": 1, "limit": 2}).json()
+    assert page["entries"] == entries[1:3]

@@ -14,6 +14,7 @@
 				page.url.pathname.startsWith('/songs')}>Library</a
 		>
 		<a href="/import" class:current={page.url.pathname.startsWith('/import')}>Import</a>
+		<a href="/log" class:current={page.url.pathname.startsWith('/log')}>Log</a>
 	</nav>
 </header>
 
