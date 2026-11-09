@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { player } from '$lib/player.svelte';
 	import { api, fieldText as text, formatLength, imports, type Item } from '$lib/api';
 
 	// A track on an album takes the album's fields from it; those are edited on the album page.
@@ -134,6 +135,9 @@
 			</p>
 			{#if !editing}
 				<div class="buttons">
+					<button class="primary" onclick={() => player.playOrToggle(item!.id, [item!], 0)}
+						>{player.current?.id === item.id && player.playing ? '❚❚ Pause' : '▶ Play'}</button
+					>
 					<button onclick={startEditing}>Edit</button>
 					{#if albumId == null}
 						<button

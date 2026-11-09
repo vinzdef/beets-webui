@@ -193,6 +193,7 @@ examples/local/          the same without Docker (BEETSDIR=examples/local)
       by track, title, artist, album or bitrate and filters to tracks on no album (or on one)
 - [x] Artist pages: their albums, albums they appear on, and their tracks on no album
 - [x] The library loads more as you scroll; covers in grids are small cached thumbnails
+- [x] Play albums and tracks in the browser, with a player bar (queue, seeking, media keys)
 - [x] Edit an album's metadata from its page, mirroring `beet modify` (`PATCH /api/albums/{id}`)
 - [x] Song pages: edit a track (and re-import a single track); bulk edits on selected albums or songs
 - [x] Album art: fetch (fetchart), upload, save a folder image or embedded art as the art file, embed

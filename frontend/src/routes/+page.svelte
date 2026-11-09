@@ -15,6 +15,7 @@
 		type Page,
 		type SongColumn
 	} from '$lib/api';
+	import PlayButton from '$lib/PlayButton.svelte';
 	import BulkEditDialog from '$lib/library/BulkEditDialog.svelte';
 	import CoverFillDialog from '$lib/library/CoverFillDialog.svelte';
 	import FeatDialog from '$lib/library/FeatDialog.svelte';
@@ -417,6 +418,7 @@
 				<thead>
 					<tr>
 						{#if selecting}<th class="check"></th>{/if}
+						<th class="playcol"></th>
 						{#each songColumns as c (c.column)}
 							<th
 								class={c.class}
@@ -440,7 +442,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each songs.results as song (song.id)}
+					{#each songs.results as song, i (song.id)}
 						<tr title={song.path ?? undefined} class:selected={selected.includes(song.id)}>
 							{#if selecting}
 								<td class="check">
@@ -452,6 +454,7 @@
 									/>
 								</td>
 							{/if}
+							<td class="playcol"><PlayButton tracks={songs.results} start={i} /></td>
 							<td class="num">{song.track || ''}</td>
 							<td><a href="/songs/{song.id}">{song.title}</a></td>
 							<td
@@ -523,8 +526,9 @@
 					<table class="songs loose">
 						<caption>Not on an album</caption>
 						<tbody>
-							{#each group.tracks as song (song.id)}
+							{#each group.tracks as song, i (song.id)}
 								<tr title={song.path ?? undefined}>
+									<td class="playcol"><PlayButton tracks={group.tracks} start={i} /></td>
 									<td><a href="/songs/{song.id}">{song.title || 'Untitled'}</a></td>
 									<td class="album">{song.album}</td>
 									<td class="num kbps">{formatKbps(song.bitrate)}</td>
@@ -714,6 +718,11 @@
 	}
 	.songs .kbps {
 		width: 4.5rem;
+	}
+	.songs .playcol {
+		width: 1.8rem;
+		padding: 0;
+		text-align: center;
 	}
 	button.sort {
 		all: unset;

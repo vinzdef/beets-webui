@@ -76,6 +76,25 @@ def test_songs_sort_and_filter(client):
     assert client.get("/api/items", params={"sort": "path"}).status_code == 422
 
 
+def test_item_file_streams_with_ranges(client, lib, tmp_path):
+    song = tmp_path / "song.mp3"
+    song.write_bytes(bytes(range(256)) * 4)
+    item = lib.items("title:Loose").get()
+    item.path = str(song).encode()
+    item.store()
+
+    res = client.get(f"/api/items/{item.id}/file")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "audio/mpeg"
+    assert res.content == song.read_bytes()
+    res = client.get(f"/api/items/{item.id}/file", headers={"Range": "bytes=10-19"})
+    assert res.status_code == 206
+    assert res.content == bytes(range(10, 20))
+    # The fixture's other tracks have no file on disk.
+    other = lib.items("album:OK").get()
+    assert client.get(f"/api/items/{other.id}/file").status_code == 404
+
+
 def test_pagination(client):
     body = client.get("/api/items", params={"offset": 1, "limit": 2}).json()
     assert body["total"] == 4

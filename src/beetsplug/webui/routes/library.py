@@ -1,11 +1,14 @@
 """Endpoints for browsing, searching and editing the library."""
 
+import mimetypes
+import os
 from typing import Literal
 
-from beets import ui
+from beets import ui, util
 from beets.dbcore.query import StringQuery
 from beets.library import Album, Item
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .art import find_art
@@ -24,6 +27,22 @@ SONG_ORDER = {
     "artist": ["artist", "album", "disc", "track"],
     "album": ["album", "disc", "track"],
     "bitrate": ["bitrate", "artist", "album"],
+}
+# Content types for the player, by extension; others are guessed. Browsers play most of these
+# (FLAC, MP3, AAC, Ogg, Opus, WAV); ALAC, WMA, APE and the like depend on the browser.
+AUDIO_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".aif": "audio/aiff",
+    ".aiff": "audio/aiff",
+    ".wma": "audio/x-ms-wma",
 }
 # Filters for the songs view: tracks on no album ("singletons"), or only those on one.
 SONG_FILTERS = {"singletons": "singleton:true", "on_album": "singleton:false"}
@@ -181,6 +200,20 @@ def get_item(request: Request, item_id: int):
         item.album_id is None and bool(item.mb_trackid) and find_plugin("mbsync") is not None
     )
     return data
+
+
+@router.get("/items/{item_id}/file")
+def get_item_file(request: Request, item_id: int):
+    """The track's audio file, for the player. Range requests let it seek."""
+    item = get_lib(request).get_item(item_id)
+    if item is None:
+        raise HTTPException(404, "item not found")
+    path = util.syspath(item.path)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "The file is missing.")
+    ext = os.path.splitext(path)[1].lower()
+    media_type = AUDIO_TYPES.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type)
 
 
 def refresh(request: Request, kind: Literal["albums", "singletons"], obj_id: int) -> None:

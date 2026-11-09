@@ -142,6 +142,8 @@ export const api = {
 		return `/api/albums/${id}/art${params.size ? `?${params}` : ''}`;
 	},
 	itemArtUrl: (id: number) => `/api/items/${id}/art`,
+	/** The track's audio file, for the player. */
+	itemFileUrl: (id: number) => `/api/items/${id}/file`,
 	fetchArt: (id: number) => post(`/albums/${id}/art/fetch`),
 	saveArt: (id: number) => post(`/albums/${id}/art/save`),
 	embedArt: (id: number) => post(`/albums/${id}/art/embed`),

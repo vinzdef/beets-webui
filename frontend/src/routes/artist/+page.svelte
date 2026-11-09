@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import PlayButton from '$lib/PlayButton.svelte';
 	import { api, formatKbps, formatLength, type Album, type ArtistDetail } from '$lib/api';
 
 	let artist = $state<ArtistDetail | null>(null);
@@ -79,6 +80,7 @@
 			<table class="songs">
 				<thead>
 					<tr>
+						<th class="playcol"></th>
 						<th>Title</th>
 						<th class="album">Album</th>
 						<th class="num kbps">kbps</th>
@@ -87,8 +89,9 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each artist.tracks as song (song.id)}
+					{#each artist.tracks as song, i (song.id)}
 						<tr title={song.path ?? undefined}>
+							<td class="playcol"><PlayButton tracks={artist.tracks} start={i} /></td>
 							<td><a href="/songs/{song.id}">{song.title || 'Untitled'}</a></td>
 							<td class="album">{song.album}</td>
 							<td class="num kbps">{formatKbps(song.bitrate)}</td>
@@ -181,6 +184,11 @@
 	}
 	.songs .kbps {
 		width: 4.5rem;
+	}
+	.songs .playcol {
+		width: 1.8rem;
+		padding: 0;
+		text-align: center;
 	}
 	.songs a {
 		color: inherit;

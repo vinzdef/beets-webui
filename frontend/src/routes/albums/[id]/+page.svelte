@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import PlayButton from '$lib/PlayButton.svelte';
+	import { player } from '$lib/player.svelte';
 	import {
 		api,
 		fieldText as text,
@@ -234,6 +236,9 @@
 			{/if}
 			{#if !editing}
 				<div class="buttons">
+					{#if album.items.length}
+						<button class="primary" onclick={() => player.play(album!.items, 0)}>▶ Play</button>
+					{/if}
 					<button onclick={startEditing}>Edit</button>
 					<button
 						disabled={busy}
@@ -389,10 +394,13 @@
 				{#each discs as group (group.disc)}
 					<tbody>
 						{#if multiDisc}
-							<tr class="disc"><th colspan="5">Disc {group.disc}</th></tr>
+							<tr class="disc"><th colspan="6">Disc {group.disc}</th></tr>
 						{/if}
 						{#each group.items as item (item.id)}
-							<tr>
+							<tr class:playing={player.current?.id === item.id}>
+								<td class="playcol">
+									<PlayButton tracks={album.items} start={album.items.indexOf(item)} />
+								</td>
 								<td class="num">{item.track || ''}</td>
 								<td><a href="/songs/{item.id}">{item.title}</a></td>
 								<td>
@@ -477,6 +485,14 @@
 	}
 	.heading p a {
 		color: inherit;
+	}
+	td.playcol {
+		width: 1.8rem;
+		padding: 0;
+		text-align: center;
+	}
+	tr.playing td {
+		color: var(--accent);
 	}
 	td.kbps {
 		width: 5.5rem;

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import PlayerBar from '$lib/PlayerBar.svelte';
+	import { player } from '$lib/player.svelte';
 
 	let { children } = $props();
 </script>
@@ -18,9 +20,11 @@
 	</nav>
 </header>
 
-<main>
+<main class:with-player={player.current}>
 	{@render children()}
 </main>
+
+<PlayerBar />
 
 <style>
 	:global(:root) {
@@ -105,5 +109,9 @@
 		padding: 1.5rem;
 		max-width: 1200px;
 		margin: 0 auto;
+	}
+	/* Room for the player bar, so it never covers the end of the page. */
+	main.with-player {
+		padding-bottom: 9rem;
 	}
 </style>
